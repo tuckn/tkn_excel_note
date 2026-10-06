@@ -69,7 +69,7 @@ def test_render_preserves_unknown_fields_and_handwritten_body(tmp_path: Path) ->
     note_path.write_text(rendered, encoding="utf-8")
     updated = read_note(note_path)
     assert updated.frontmatter["customField"] == "keep-me"
-    assert updated.frontmatter["schemaVersion"] == "2.1"
+    assert updated.frontmatter["schemaVersion"] == "3.0.0"
     assert updated.frontmatter["description"] == "Old"
     assert updated.frontmatter["comments"] == "Example description"
     assert list(updated.frontmatter) == [
@@ -83,17 +83,18 @@ def test_render_preserves_unknown_fields_and_handwritten_body(tmp_path: Path) ->
         "keywords",
         "categories",
         "comments",
+        "sourceId",
         "sourceRoot",
         "sourceFileName",
         "sourceFullPath",
-        "sourceId",
         "sourceCreated",
         "sourceModified",
+        "contextStatus",
         "customField",
-        "date",
+        "tags",
+        "created",
         "updated",
         "noteId",
-        "contextStatus",
     ]
     assert "Handwritten text." in updated.body
     assert "Excel Metadata" not in updated.body
@@ -113,7 +114,7 @@ def test_packaged_note_profile_owns_markdown_structure(tmp_path: Path) -> None:
     note_path.write_text(rendered, encoding="utf-8")
     note = read_note(note_path)
 
-    assert template.schema_version == "2.1"
+    assert template.schema_version == "3.0.0"
     assert template.frontmatter_fields == (
         "type",
         "schemaVersion",
@@ -125,16 +126,17 @@ def test_packaged_note_profile_owns_markdown_structure(tmp_path: Path) -> None:
         "keywords",
         "categories",
         "comments",
+        "sourceId",
         "sourceRoot",
         "sourceFileName",
         "sourceFullPath",
-        "sourceId",
         "sourceCreated",
         "sourceModified",
-        "date",
+        "contextStatus",
+        "tags",
+        "created",
         "updated",
         "noteId",
-        "contextStatus",
     )
     assert note.frontmatter["schemaVersion"] == template.schema_version
     assert tuple(note.frontmatter) == template.frontmatter_fields
@@ -143,13 +145,13 @@ def test_packaged_note_profile_owns_markdown_structure(tmp_path: Path) -> None:
         "sheet-contexts",
     )
     assert note.frontmatter["author"] == "Example author"
-    assert note.frontmatter["sourceCreated"] == "2025-12-01T00:00:00Z"
+    assert note.frontmatter["sourceCreated"] == "2025-12-01T09:00:00+09:00"
     assert note.frontmatter["sourceModified"] == "2026-01-01T00:00:00+09:00"
     assert "Excel Metadata" not in rendered
-    for field in ("type", "sourceCreated", "sourceModified", "date", "updated", "noteId"):
+    for field in ("type", "schemaVersion", "sourceCreated", "sourceModified", "created", "updated"):
         line = next(line for line in rendered.splitlines() if line.startswith(f"{field}:"))
         assert "'" not in line
-        assert '"' not in line
+        assert '"' in line
     assert "## Overview" not in template.text
     assert note.frontmatter["sourceFullPath"] == str(workbook_path)
     assert [rendered.index(name) for name in template.managed_names] == sorted(

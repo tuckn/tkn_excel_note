@@ -128,8 +128,8 @@ def _validate_template(profile: str, text: str) -> NoteTemplate:
         raise NoteResourceError(f"Note profile {profile!r} has invalid Frontmatter: {exc}") from exc
     if not isinstance(frontmatter, dict):
         raise NoteResourceError(f"Note profile {profile!r} Frontmatter must be a mapping")
-    if frontmatter.get("type") != "Excel":
-        raise NoteResourceError(f"Note profile {profile!r} type must be 'Excel'")
+    if frontmatter.get("type") != "excel":
+        raise NoteResourceError(f"Note profile {profile!r} type must be 'excel'")
     schema_version = frontmatter.get("schemaVersion")
     if not isinstance(schema_version, str) or not schema_version.strip():
         raise NoteResourceError(

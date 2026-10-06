@@ -171,7 +171,7 @@ def test_pull_cover_lifecycle(monkeypatch, tmp_path: Path) -> None:  # type: ign
 
     # Push must retain ownership so later thumbnail updates still work.
     note_path.write_text(
-        note_path.read_text(encoding="utf-8").replace("title: Example title", "title: Edited"),
+        note_path.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "Edited"'),
         encoding="utf-8",
     )
     monkeypatch.setattr(pipeline, "state_root", lambda: tmp_path / "backups")
@@ -206,9 +206,9 @@ def test_manual_cover_and_custom_content_preserved(monkeypatch, tmp_path: Path) 
     pipeline.run_pull(config, config.sources, write_notes=True, preference=None)
     note = tmp_path / "notes" / "book.xlsx.md"
     text = note.read_text(encoding="utf-8").replace(
-        "cover: ''", "cover: https://example.com/manual.png"
+        'cover: ""', "cover: https://example.com/manual.png"
     )
-    text = text.replace("type: Excel", "custom: keep\ntype: Excel") + "\n## My notes\nKeep this.\n"
+    text = text.replace('type: "excel"', 'custom: keep\ntype: "excel"') + "\n## My notes\nKeep this.\n"
     note.write_text(text, encoding="utf-8")
     set_thumbnail(workbook, png())
     pipeline.run_pull(config, config.sources, write_notes=True, preference=None)

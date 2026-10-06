@@ -100,7 +100,7 @@ def test_changed_workbook_and_push_keep_sheet_cover_mode(monkeypatch, tmp_path):
     workbook, note, state, calls, pull = setup_pull(monkeypatch, tmp_path)
     pull()
     note.write_text(
-        note.read_text(encoding="utf-8").replace("title: Example title", "title: Edited"),
+        note.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "Edited"'),
         encoding="utf-8",
     )
     monkeypatch.setattr(pipeline, "state_root", lambda: tmp_path / "backups")
@@ -174,7 +174,7 @@ def test_conflict_does_not_open_excel(monkeypatch, tmp_path):
     pull()
     write_properties(workbook, core={"title": "Source edit"}, backup_dir=tmp_path / "backups")
     note.write_text(
-        note.read_text(encoding="utf-8").replace("title: Example title", "title: Note edit"),
+        note.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "Note edit"'),
         encoding="utf-8",
     )
     assert pull().status == "conflict"

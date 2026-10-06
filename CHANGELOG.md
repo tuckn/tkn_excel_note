@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 4.0.0 - 2026-10-07
+
+- Excel代理ノートを `type: "excel"` / `schemaVersion: "3.0.0"` へ変更。先頭5項目、意味別の中央項目、末尾 `tags`・`created`・`updated`・`noteId` に整列し、フラットなYAMLを出力。
+- `date` を `created` へ引き継ぎ、日時を日本時間・秒単位・ダブルクォート付きに統一。通常更新とAI生成後更新に共通適用し、Frontmatter終端と本文の間に空行を保証。
+- `python -m excel_catalog_pipeline.note_migration` で既存ノートのYAMLのみを移行可能に。`--dry-run`、全件事前検証、バックアップ、同時編集検出、途中失敗時の復元に対応。本文・識別子・独自項目の値を保持。
+- 既存の `date` / `type: Excel` を参照する外部スクリプトやBasesは、`created` / `type: excel` に更新してください。独立した `export` のスキーマは継続。
 
 - `config show` を `config list` に変更。既定出力を `git config --list` と同様の1行ごとの `key=value` にし、Windows パスをそのままコピーできる表記に統一。
 - `config list --json` で1行の構造化 JSON を出力。読み込んだ設定の版・正規化の有無、値の決定元、既定の生成 profile を両形式で表示。設定確認のログは標準エラーへ出力。

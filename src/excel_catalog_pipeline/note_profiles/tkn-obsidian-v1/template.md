@@ -1,6 +1,6 @@
 ---
-type: Excel
-schemaVersion: "2.1"
+type: "excel"
+schemaVersion: "3.0.0"
 title: {{ title }}
 description: {{ description }}
 cover: {{ cover }}
@@ -9,16 +9,17 @@ author: {{ author }}
 keywords: {{ keywords }}
 categories: {{ categories }}
 comments: {{ comments }}
+sourceId: {{ source_id }}
 sourceRoot: {{ source_root }}
 sourceFileName: {{ source_file_name }}
 sourceFullPath: {{ source_full_path }}
-sourceId: {{ source_id }}
 sourceCreated: {{ source_created }}
 sourceModified: {{ source_modified }}
-date: {{ date }}
+contextStatus: {{ context_status }}
+tags: {{ tags }}
+created: {{ created }}
 updated: {{ updated }}
 noteId: {{ note_id }}
-contextStatus: {{ context_status }}
 ---
 
 # {{ title }}

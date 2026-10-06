@@ -22,8 +22,8 @@ class SourcePathDumper(yaml.SafeDumper):
         return node
 
 
-# All note writers use plain ISO timestamp strings. Keeping the same presentation
-# prevents a metadata pull and an AI update from alternately quoting timestamps.
+# The base exporter preserves timestamp strings without implicit YAML date types.
+# Proxy notes use NoteDumper to apply their quoted JST timestamp presentation.
 SourcePathDumper.yaml_implicit_resolvers = {
     key: [(tag, pattern) for tag, pattern in values if tag != "tag:yaml.org,2002:timestamp"]
     for key, values in SourcePathDumper.yaml_implicit_resolvers.items()

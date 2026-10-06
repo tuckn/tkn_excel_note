@@ -8,8 +8,8 @@
 
 | 観点 | 書き出し（`export`） | 代理ノート（`pull`） |
 | --- | --- | --- |
-| `type` | `ExcelExport` | `Excel` |
-| `schemaVersion` | `"1.0"` | `"2.1"` |
+| `type` | `ExcelExport` | `excel` |
+| `schemaVersion` | `"1.0"` | `"3.0.0"` |
 | 保存先 | 既定は各ブックの隣。単体のブックは `--output` で変更可能 | `sources.<id>.notes.dir` |
 | 管理マーカー | なし | ツールが管理する本文を `excel-catalog` マーカーで囲む |
 | 更新 | `--force` で全体を置き換え | 管理マーカー内と同期対象の Frontmatter だけを更新 |
@@ -18,12 +18,12 @@
 ## 代理ノートの Frontmatter
 
 代理ノートは、同梱のテンプレート `tkn-obsidian-v1` から作成します。
-テンプレートにない Frontmatter 項目を追加した場合、ツールはその項目を変更せずに保持します。
+テンプレートにない Frontmatter 項目を追加した場合、ツールはその値を保持し、末尾の共通項目より前に配置します。
 
 | 項目 | 内容 | 更新するコマンド |
 | --- | --- | --- |
-| `type` | 常に `Excel` | 作成時のみ |
-| `schemaVersion` | 代理ノートの形式の版。引用符付きの文字列 `"2.1"` | `pull` |
+| `type` | 常に `excel`。旧 `Excel` も読み取れます | ノート更新時 |
+| `schemaVersion` | 代理ノートの形式の版。引用符付きの文字列 `"3.0.0"` | ノート更新時 |
 | `title`、`subject`、`author`、`keywords`、`categories`、`comments` | Excel の文書プロパティ。編集すると `push` で Excel へ反映できます。対応は「[メタデータの対応](synchronization.md#メタデータの対応)」を参照してください。 | `pull` / `push` |
 | `description` | ノート全体の概要。Excel には反映しません。 | 利用者 |
 | `cover` | カード表示用の画像へのリンク | `pull` |
@@ -32,7 +32,8 @@
 | `sourceFullPath` | 元ブックの絶対パス | `pull` |
 | `sourceId` | `<source の ID>:<ブックの固定 ID または相対パス>` | `pull` |
 | `sourceCreated` / `sourceModified` | Excel の作成日時・更新日時 | `pull` |
-| `date` / `updated` | ノートの作成日時・更新日時 | `pull` |
+| `tags` | ノートのタグ。空の場合は `[]` | 利用者 |
+| `created` / `updated` | ノートの作成日時・更新日時。旧 `date` は値を引き継いで `created` に変換 | ノート更新時 |
 | `noteId` | ノートの識別子（UUID）。作成後は変わりません。 | 作成時のみ |
 | `contextStatus` | AI の説明の状態。値の意味は「[説明の状態](../guides/sheet-content.md#説明の状態)」を参照してください。 | `pull` |
 
@@ -50,10 +51,39 @@
 いずれも、直近の実行で選んだシートだけでなく、それまでに生成した説明全体を表します。
 これらの項目は Excel へ書き戻しません。
 
-`type`、日時、`noteId` は引用符なしの YAML の値、`schemaVersion` は引用符付きの文字列で出力します。
+先頭は `type → schemaVersion → title → description → cover`、末尾は `tags → created → updated → noteId` に固定します。
+中央は、文書情報（`subject`、`author`、`keywords`、`categories`、`comments`）、元ファイルの識別・所在（`sourceId`、`sourceRoot`、`sourceFileName`、`sourceFullPath`）、元ファイルの日時、AI生成情報の順です。
+AI生成情報は `contextStatus → contextAnalyzedSheets → contextOmittedSheets → contextStaleSheets → contextUnverifiedSheets → contextSourceFingerprint → contextGeneratedAt` の順で、存在する項目だけを出力します。
+階層構造を追加せず、空行とコメントで区切ります。終端の `---` と本文の間には空行を入れます。
+通常の取り込み・書き戻しによるノート更新・AI生成後の更新で、同じ並びと日時形式を使います。
+
+日時は `"2026-06-21T05:44:56+09:00"` のように、ダブルクォート付き・日本時間・秒単位に統一します。
+UTCなどは同じ瞬間の日本時間に変換し、小数秒は省略します。時刻不明の日付だけの値は維持します。
+タイムゾーンがない日時、不正な日時、値の異なる `date` と `created` の併存はエラーにし、推測で補完しません。
+空文字列は `""`、空配列は `[]` です。先頭5項目・日時・Obsidianリンクはダブルクォートで囲み、`sourceFullPath` はシングルクォートで囲みます。
+`description` はノートの概要、`comments` はExcelの文書プロパティであり、別々に保持します。
 `keywords` と `categories` は、`sources.<id>.notes.frontmatter_term_format` が `obsidian-link` なら `[[...]]` 形式のリンク、`plain` なら通常の文字列の一覧です。
 `files` 項目は同期に使いません。
 既存のノートにある場合は、その値を保持します。
+
+## 既存代理ノートのYAMLだけを移行する
+
+Excelや同期記録に触れず、Frontmatterだけを新形式へ揃える補助コマンドです。
+まず `--dry-run` で全対象を検証します。通常実行では、新しいバックアップ先を必ず指定します。
+
+```powershell
+uv run python -m excel_catalog_pipeline.note_migration --root "C:\path\to\notes\Excel" --dry-run
+uv run python -m excel_catalog_pipeline.note_migration --root "C:\path\to\notes\Excel" --backup-dir "C:\path\to\private-backups\excel-frontmatter-v3"
+```
+
+- 対象フォルダ配下のExcel代理ノートだけを更新します。FrontmatterのないMarkdownや別typeはスキップします。
+- `--dry-run` はノート・バックアップ・レポートを作成しません。
+- 全件の変換・本文保持を検証し、変更前の全ファイルをバックアップしてから書き込みます。
+- 本文・BOM・改行形式・`noteId`・独自項目の値を保持します。既存の `date` を `created` へ引き継ぎ、`updated` は移行日時へ置き換えません。
+- YAMLのコメント・引用符・項目間の空行は新形式へ再整形します。独自項目の値は維持します。
+- 同時編集を検出した場合は停止します。途中失敗では、今回書いた内容のままのノートだけを復元します。
+- バックアップ先の `files/` に元ファイル、`recovery-index.json` に復元用の相対パスとハッシュ、`report.json` に件数を保存します。バックアップには元の私的情報が含まれるため、privateな保存先を使ってください。
+- 進捗は標準エラー、結果は標準出力の1行JSONです。同じノートへの再実行は追加変更を生みません。
 
 ## 書き出しの Frontmatter
 

@@ -71,11 +71,11 @@ def test_source_create_update_push_preserves_identity_and_user_text(setup):
     before = book.read_bytes()
     assert pull(book, output) == 0
     first = read_note(output)
-    assert first.frontmatter["type"] == "Excel"
+    assert first.frontmatter["type"] == "excel"
     assert first.frontmatter["contextStatus"] == "not-generated"
     assert book.read_bytes() == before and not calls
     output.write_text(
-        output.read_text(encoding="utf-8").replace("title: Example title", "title: Edited title")
+        output.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "Edited title"')
         + "\n## My notes\nKeep this.\n",
         encoding="utf-8",
     )
@@ -142,7 +142,7 @@ def test_source_root_change_preserves_note_and_base(setup, monkeypatch):
     assert pull(book, output) == 0
     note_id = read_note(output).note_id
     output.write_text(
-        output.read_text(encoding="utf-8").replace("title: Example title", "title: My title"),
+        output.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "My title"'),
         encoding="utf-8",
     )
     source = SourceConfig(
@@ -205,7 +205,7 @@ def test_conflicting_changes_do_not_overwrite_either_side(setup):
     _, book, output, _ = setup
     assert pull(book, output) == 0
     output.write_text(
-        output.read_text(encoding="utf-8").replace("title: Example title", "title: Note edit"),
+        output.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "Note edit"'),
         encoding="utf-8",
     )
     create_workbook(book, title="Excel edit")

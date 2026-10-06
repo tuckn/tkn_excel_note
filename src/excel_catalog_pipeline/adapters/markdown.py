@@ -7,7 +7,6 @@ import json
 import re
 import uuid
 from collections.abc import Iterable
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,50 +14,30 @@ import yaml
 
 from ..discovery import matches_any, normalize_relative_path
 from ..models import ProxyNote, SourceConfig, WorkbookInfo
+from ..note_frontmatter import (
+    NoteFrontmatterError,
+    NoteLoader,
+    dump_frontmatter,
+    normalize_frontmatter,
+    now_iso,
+)
 from ..note_resources import (
     ManagedBlock,
     NoteResourceError,
     load_note_template,
     managed_blocks,
 )
-from ..note_yaml import SourcePathDumper
 from ..sheet_layout import arrange_sheets, sheet_id
 
 WINDOWS_PATH_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
-YAML_TIMESTAMP_TAG = "tag:yaml.org,2002:timestamp"
 
 
-class FrontmatterLoader(yaml.SafeLoader):
-    """Load plain ISO timestamps as strings so proxy-note values remain stable."""
-
-
-class FrontmatterDumper(SourcePathDumper):
-    """Emit ISO timestamp strings without adding YAML quotes."""
-
-
-def _without_timestamp_resolver(
-    resolvers: dict[str | None, list[tuple[str, re.Pattern[str]]]],
-) -> dict[str | None, list[tuple[str, re.Pattern[str]]]]:
-    return {
-        key: [(tag, pattern) for tag, pattern in values if tag != YAML_TIMESTAMP_TAG]
-        for key, values in resolvers.items()
-    }
-
-
-FrontmatterLoader.yaml_implicit_resolvers = _without_timestamp_resolver(
-    FrontmatterLoader.yaml_implicit_resolvers
-)
-FrontmatterDumper.yaml_implicit_resolvers = _without_timestamp_resolver(
-    FrontmatterDumper.yaml_implicit_resolvers
-)
+class FrontmatterLoader(NoteLoader):
+    """Read old and current notes with timestamp strings and unique keys."""
 
 
 class NoteError(ValueError):
     """A proxy note is malformed or unsafe to update."""
-
-
-def now_iso() -> str:
-    return datetime.now().astimezone().replace(microsecond=0).isoformat()
 
 
 def read_note(path: Path) -> ProxyNote:
@@ -70,7 +49,7 @@ def read_note(path: Path) -> ProxyNote:
         raise NoteError(f"Invalid Frontmatter fence: {path}")
     try:
         loaded = yaml.load(match.group(1), Loader=FrontmatterLoader) or {}
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, NoteFrontmatterError) as exc:
         raise NoteError(f"Invalid Frontmatter YAML in {path}: {exc}") from exc
     if not isinstance(loaded, dict):
         raise NoteError(f"Frontmatter must be a mapping: {path}")
@@ -334,6 +313,8 @@ def render_note(
 
     try:
         template = load_note_template(source.profile)
+        if existing:
+            existing_frontmatter = normalize_frontmatter(existing_frontmatter)
         description = _frontmatter_string(existing_frontmatter.get("description"))
         clean_body = existing.body if existing else ""
         source_created = (
@@ -366,7 +347,8 @@ def render_note(
                 "source_id": f"{source.id}:{stable_part}",
                 "source_created": source_created,
                 "source_modified": source_modified,
-                "date": existing_frontmatter.get("date", timestamp),
+                "created": existing_frontmatter.get("created", timestamp),
+                "tags": existing_frontmatter.get("tags", []),
                 "updated": (
                     timestamp
                     if touch_updated or "updated" not in existing_frontmatter
@@ -379,7 +361,7 @@ def render_note(
             }
         )
         sections = managed_blocks(rendered_template.body, template)
-    except NoteResourceError as exc:
+    except (NoteResourceError, NoteFrontmatterError) as exc:
         raise NoteError(str(exc)) from exc
 
     frontmatter = _merge_frontmatter(rendered_template.frontmatter, existing_frontmatter)
@@ -408,14 +390,10 @@ def render_note(
             body = arrange_sheets(body, workbook.sheets, extracted=_sheet_extraction(workbook))
         except ValueError as exc:
             raise NoteError(str(exc)) from exc
-    yaml_text = yaml.dump(
-        frontmatter,
-        Dumper=FrontmatterDumper,
-        allow_unicode=True,
-        sort_keys=False,
-        default_flow_style=False,
-        width=1000,
-    )
+    try:
+        yaml_text = dump_frontmatter(frontmatter)
+    except NoteFrontmatterError as exc:
+        raise NoteError(str(exc)) from exc
     return f"---\n{yaml_text}---\n\n{body.lstrip()}"
 
 

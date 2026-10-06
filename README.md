@@ -374,6 +374,7 @@ tkn-excel-note pull --source workbooks
 `notes.dir` に、ブックごとの代理ノート `<ファイル名>.md` が作成されます。
 `recursive: true` の場合、入力フォルダの `2026/example.xlsx` は `notes.dir` の `2026/example.xlsx.md` になります。
 代理ノートの Frontmatter には、`noteId`（ノートの識別子）や `sourceFileName`（入力フォルダからの相対パス）など、同期に使う項目が入ります。
+形式は `type: "excel"` / `schemaVersion: "3.0.0"` です。先頭の基本情報、Excel文書情報、元ファイル、AI生成情報、末尾の `tags`・`created`・`updated`・`noteId` の順に揃えます。日時は日本時間・秒単位・ダブルクォート付きです。旧 `date` は次のノート更新時に `created` へ引き継ぎます。YAMLだけを一括移行する方法は「[ノートの形式](docs/reference/note-format.md#既存代理ノートのyamlだけを移行する)」を参照してください。
 
 結果は画面に表示され、処理ごとのレポートが `~/.tkn/excel_note/state/runs/<run-id>/` に保存されます。
 作成されたノートは `created` と表示されます。

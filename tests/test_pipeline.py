@@ -6,6 +6,7 @@ import excel_catalog_pipeline.pipeline as pipeline_module
 from excel_catalog_pipeline.adapters.markdown import NoteError, read_note
 from excel_catalog_pipeline.adapters.ooxml import inspect_workbook, write_properties
 from excel_catalog_pipeline.config import validate_config
+from excel_catalog_pipeline.note_frontmatter import normalize_timestamp
 from excel_catalog_pipeline.pipeline import run_pull, run_push
 
 from .helpers import create_workbook
@@ -61,7 +62,7 @@ def test_push_detects_note_only_change_and_writes_backup(monkeypatch, tmp_path: 
     note_path = tmp_path / "notes" / "book.xlsx.md"
     text = note_path.read_text(encoding="utf-8")
     note_path.write_text(
-        text.replace("title: Example title", "title: Human title"), encoding="utf-8"
+        text.replace('title: "Example title"', 'title: "Human title"'), encoding="utf-8"
     )
     dry, _ = run_push(
         config,
@@ -113,7 +114,7 @@ def test_partial_push_does_not_advance_base_for_source_only_change(
     note_path = tmp_path / "notes" / "book.xlsx.md"
     note_path.write_text(
         note_path.read_text(encoding="utf-8").replace(
-            "- '[[Engineer, Myself]]'", "- '[[Note category]]'"
+            '- "[[Engineer, Myself]]"', '- "[[Note category]]"'
         ),
         encoding="utf-8",
     )
@@ -159,7 +160,7 @@ def test_pull_prefer_source_restores_note_side_metadata_change(monkeypatch, tmp_
 
     note_path = tmp_path / "notes" / "book.xlsx.md"
     note_path.write_text(
-        note_path.read_text(encoding="utf-8").replace("author: Example author", "author: ''"),
+        note_path.read_text(encoding="utf-8").replace("author: Example author", 'author: ""'),
         encoding="utf-8",
     )
 
@@ -190,7 +191,7 @@ def test_push_preserves_repeated_title_whitespace(monkeypatch, tmp_path: Path) -
     note_path = tmp_path / "notes" / "book.xlsx.md"
     note_path.write_text(
         note_path.read_text(encoding="utf-8").replace(
-            "title: Example title", 'title: "Human  title"'
+            'title: "Example title"', 'title: "Human  title"'
         ),
         encoding="utf-8",
     )
@@ -234,11 +235,11 @@ def test_push_writes_editable_core_fields_but_preserves_pull_only_source_dates(
     replacements = {
         "subject: Example subject": "subject: Human subject",
         "author: Example author": "author: Human author",
-        "- '[[Excel]]'": "- '[[Excel metadata]]'",
-        "- '[[Engineer, Myself]]'": "- '[[Workbook]]'",
+        '- "[[Excel]]"': '- "[[Excel metadata]]"',
+        '- "[[Engineer, Myself]]"': '- "[[Workbook]]"',
         "comments: Example description": "comments: Human comments",
-        "sourceCreated: 2025-12-01T00:00:00Z": "sourceCreated: 2000-01-01T00:00:00Z",
-        "sourceModified: 2026-01-01T00:00:00+09:00": ("sourceModified: 2000-01-02T00:00:00Z"),
+        'sourceCreated: "2025-12-01T09:00:00+09:00"': "sourceCreated: 2000-01-01T00:00:00Z",
+        'sourceModified: "2026-01-01T00:00:00+09:00"': ("sourceModified: 2000-01-02T00:00:00Z"),
     }
     for old, new in replacements.items():
         assert old in text
@@ -262,14 +263,18 @@ def test_push_writes_editable_core_fields_but_preserves_pull_only_source_dates(
     assert core["description"] == "Human comments"
 
     after_push = read_note(note_path)
-    assert after_push.frontmatter["sourceCreated"] == "2000-01-01T00:00:00Z"
-    assert after_push.frontmatter["sourceModified"] == "2000-01-02T00:00:00Z"
+    assert after_push.frontmatter["sourceCreated"] == "2000-01-01T09:00:00+09:00"
+    assert after_push.frontmatter["sourceModified"] == "2000-01-02T09:00:00+09:00"
 
     pulled = run_pull(config, config.sources, write_notes=True, preference=None)
     assert [action.status for action in pulled] == ["updated"]
     after_pull = read_note(note_path)
-    assert after_pull.frontmatter["sourceCreated"] == core["created"]
-    assert after_pull.frontmatter["sourceModified"] == core["modified"]
+    assert after_pull.frontmatter["sourceCreated"] == normalize_timestamp(
+        core["created"], "sourceCreated"
+    )
+    assert after_pull.frontmatter["sourceModified"] == normalize_timestamp(
+        core["modified"], "sourceModified"
+    )
 
 
 def test_source_rename_is_detected_by_stable_id(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
@@ -423,7 +428,7 @@ def test_push_rolls_back_workbook_when_note_refresh_fails(monkeypatch, tmp_path:
     run_pull(config, config.sources, write_notes=True, preference=None)
     note = tmp_path / "notes" / "book.xlsx.md"
     note.write_text(
-        note.read_text(encoding="utf-8").replace("title: Example title", "title: Human title"),
+        note.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "Human title"'),
         encoding="utf-8",
     )
     workbook_before = workbook.read_bytes()
@@ -454,7 +459,7 @@ def test_push_stops_when_both_sides_changed_differently(monkeypatch, tmp_path: P
     run_pull(config, config.sources, write_notes=True, preference=None)
     note = tmp_path / "notes" / "book.xlsx.md"
     note.write_text(
-        note.read_text(encoding="utf-8").replace("title: Example title", "title: Note title"),
+        note.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "Note title"'),
         encoding="utf-8",
     )
     write_properties(

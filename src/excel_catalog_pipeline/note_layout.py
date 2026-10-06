@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from .note_frontmatter import NoteLoader, normalize_note
 from .note_yaml import SourcePathDumper
 
 FRONTMATTER = re.compile(r"\A(\ufeff?---[ \t]*\r?\n)(.*?)(\r?\n---[ \t]*\r?\n?)", re.DOTALL)
@@ -18,6 +19,12 @@ def patch_frontmatter(text: str, values: dict[str, Any]) -> str:
     if match is None:
         raise ValueError("A proxy note must have YAML Frontmatter")
     raw = match.group(2)
+    loaded = yaml.load(raw, Loader=NoteLoader)
+    if isinstance(loaded, dict) and (
+        str(loaded.get("type", "")).casefold() == "excel"
+        or loaded.get("fileKind") == "excelWorkbook"
+    ):
+        return normalize_note(text, values)
     root = yaml.compose(raw)
     if not isinstance(root, yaml.MappingNode):
         raise ValueError("Frontmatter must be a mapping")
