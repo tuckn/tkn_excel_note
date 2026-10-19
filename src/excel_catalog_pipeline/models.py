@@ -124,6 +124,16 @@ class CoverConfig:
 
 
 @dataclass(frozen=True)
+class ThumbnailConfig:
+    enabled: bool = True
+    subdir: str = "thumbnails"
+    max_edge: int | None = None
+    format: str = "webp"
+    quality: int = 85
+    lossless: bool = True
+
+
+@dataclass(frozen=True)
 class AppConfig:
     schema_version: str
     sources: tuple[SourceConfig, ...]
@@ -131,6 +141,7 @@ class AppConfig:
     loaded_files: tuple[Path, ...] = ()
     context: ContextConfig = field(default_factory=ContextConfig)
     cover: CoverConfig = field(default_factory=CoverConfig)
+    thumbnails: ThumbnailConfig = field(default_factory=ThumbnailConfig)
     default_generator: str | None = None
     generators: dict[str, GeneratorConfig] = field(default_factory=dict)
     config_details: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)

@@ -467,6 +467,10 @@ Excel とノートで同じ項目を別々の値に変えていた場合、そ�
 `pull` は、Frontmatter の `cover` に、ブックの画像へのリンクを設定します。
 Obsidian Bases のカードビューで、この画像をサムネイルとして表示できます。
 
+cover 用の画像は既定で `notes.dir/thumbnails/` に WebP（可逆圧縮）で保存します。
+`thumbnails` 設定でサイズ・形式・品質・可逆圧縮を変更できます（[設定リファレンス](docs/reference/configuration.md#プレビュー画像の設定)）。
+既存の自動管理の cover は次回の `pull` で更新し、旧画像と手動指定の cover は保持します。
+
 既定では、Excel が保存時に埋め込んだサムネイル画像を使います。
 サムネイルがないブックや、特定の範囲を表示したい場合は、シートの指定範囲を画像化できます。
 この画像化は Excel を使いますが、AI は使いません。
@@ -535,7 +539,7 @@ tkn-excel-note pull --source workbooks --cover sheet --cover-range "A1:Q50"
 | 保存場所 | 内容 | 失った場合の影響 |
 | --- | --- | --- |
 | `~/.tkn/excel_note/config.yaml` | 設定ファイル | 入力フォルダと保存先の指定を作り直す必要があります。 |
-| `notes.dir`（source ごと） | 代理ノートと、その `img/` の画像 | 手書きの本文と生成済みの説明を失います。ブックからは復元できません。 |
+| `notes.dir`（source ごと） | 代理ノートと、その `img/`・`thumbnails/` の画像 | 手書きの本文と生成済みの説明を失います。ブックからは復元できません。 |
 | `~/.tkn/excel_note/state/sync-state.json` | 同期記録 | 既存の差分が競合として扱われることがあります。 |
 | `~/.tkn/excel_note/state/backups/` | `push` などで書き換える前のブック、削除前のノート | 過去の状態に戻せなくなります。 |
 | `~/.tkn/excel_note/state/context/` | 説明の再利用・保護の記録と AI の使用量 | 説明を再利用できなくなります。手直しの有無を確認できないため、既存の説明の置き換えが止まる場合があります。 |

@@ -10,10 +10,12 @@ from typing import Any
 from .context_source import ContextError, sheet_list
 from .cover_render import RENDER_VERSION, render_cover
 from .cover_settings import validate_cover
-from .models import CoverConfig, ProxyNote, SourceConfig, WorkbookInfo
+from .models import CoverConfig, ProxyNote, SourceConfig, ThumbnailConfig, WorkbookInfo
 from .shared_read import read_shared
-from .thumbnail import CoverPlan, attachment_plan
+from .thumbnail import CoverPlan, attachment_plan, cover_webp, thumbnail_extension
 from .thumbnail import plan_cover as embedded_cover
+
+DEFAULT_THUMBNAILS = ThumbnailConfig()
 
 
 class CoverError(ValueError):
@@ -53,6 +55,7 @@ def plan_cover(
     options: CoverConfig,
     render: bool,
     max_workbook_mb: int = 100,
+    thumbnails: ThumbnailConfig = DEFAULT_THUMBNAILS,
 ) -> CoverPlan:
     current = note.frontmatter.get("cover", "") if note else ""
     managed = str((entry or {}).get("managedCover", ""))
@@ -60,9 +63,13 @@ def plan_cover(
     previous = previous if isinstance(previous, dict) else {}
     if current and current != managed:
         return CoverPlan(value=current, generation=previous or None, details={"status": "manual"})
+    if not thumbnails.enabled:
+        return CoverPlan(
+            current, managed, generation=previous or None, details={"status": "disabled"}
+        )
     mode = options.mode if options.mode != "auto" else previous.get("mode", "embedded")
     if mode == "embedded":
-        result = embedded_cover(workbook, source, note, entry)
+        result = embedded_cover(workbook, source, note, entry, thumbnails)
         if not result.warning and (previous or options.mode == "embedded"):
             result.generation = {"mode": "embedded"}
         result.details = {"mode": "embedded", "status": "warning" if result.warning else "ready"}
@@ -102,6 +109,7 @@ def plan_cover(
         details.update(sheet=sheet["name"], range=address, width=width)
         identity = {
             "mode": "sheet",
+            "thumbnails": asdict(thumbnails),
             "rendererVersion": RENDER_VERSION,
             "settings": {"sheet": settings.sheet, "range": address, "width": width},
             "sheetId": sheet["id"],
@@ -110,17 +118,39 @@ def plan_cover(
         }
         cached_hash = previous.get("imageHash", "")
         if (
-            all(previous.get(key) == value for key, value in identity.items())
+            all(
+                previous.get(key) == value for key, value in identity.items() if key != "thumbnails"
+            )
+            and ("thumbnails" not in previous or previous["thumbnails"] == asdict(thumbnails))
             and isinstance(cached_hash, str)
             and len(cached_hash) == 64
             and all(char in "0123456789abcdef" for char in cached_hash)
         ):
-            cached = source.note_root / "img" / f"excel-cover-{cached_hash}.png"
-            if cached.is_file():
-                png = cached.read_bytes()
-                if hashlib.sha256(png).hexdigest() == cached_hash:
-                    result = attachment_plan(png, source)
-                    result.generation = previous
+            old_settings = previous.get("thumbnails")
+            if isinstance(old_settings, dict):
+                from .thumbnail_settings import validate_thumbnails
+
+                old_options = validate_thumbnails(old_settings)
+                candidates = [
+                    source.note_root
+                    / old_options.subdir
+                    / f"excel-cover-{cached_hash}.{thumbnail_extension(old_options)}"
+                ]
+            else:
+                candidates = [
+                    source.note_root / folder / f"excel-cover-{cached_hash}.{ext}"
+                    for folder, ext in (("thumbnails", "webp"), ("img", "png"))
+                ]
+            for cached in candidates:
+                if not cached.is_file():
+                    continue
+                image = cached.read_bytes()
+                if hashlib.sha256(image).hexdigest() == cached_hash:
+                    # Re-encode a valid saved preview when only encoding settings changed.
+                    if old_settings != asdict(thumbnails):
+                        image = cover_webp(image, thumbnails)
+                    result = attachment_plan(image, source, thumbnails)
+                    result.generation = {**identity, "imageHash": hashlib.sha256(image).hexdigest()}
                     result.details = {**details, "status": "cached"}
                     return result
         if not render:
@@ -134,9 +164,11 @@ def plan_cover(
         logging.getLogger(__name__).info(
             "Rendering cover: sheet=%s range=%s width=%d.", sheet["name"], address, width
         )
-        png = render_cover(data, workbook.extension, sheet["name"], address, width)
-        result = attachment_plan(png, source)
-        result.generation = {**identity, "imageHash": hashlib.sha256(png).hexdigest()}
+        image = cover_webp(
+            render_cover(data, workbook.extension, sheet["name"], address, width), thumbnails
+        )
+        result = attachment_plan(image, source, thumbnails)
+        result.generation = {**identity, "imageHash": hashlib.sha256(image).hexdigest()}
         result.details = {**details, "status": "rendered"}
         return result
     except Exception as exc:

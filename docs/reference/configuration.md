@@ -268,3 +268,19 @@ profile のファイル構成と作り方は「[独自の文章 profile を作�
 ## 設定ファイルの版
 
 `schema_version` は設定ファイルの形式の版で、現在は `"2.1.0"` です。
+
+## プレビュー画像の設定
+
+`thumbnails` は `pull` の cover 用画像だけに適用します。VLM 用の `img/` と独立し、EXIF・ICC・XMPなどのメタデータを除去します。
+
+```yaml
+thumbnails:
+  enabled: true
+  subdir: thumbnails
+  max_edge: 480
+  format: webp
+  quality: 85
+  lossless: false
+```
+
+既定値は `max_edge: null`（従来の寸法を維持）、`lossless: true` です。他の既定値は上記と同じです。`max_edge` は64～4000またはnull、`quality` は1～100、`format` はpng/jpeg/webpを指定できます。`lossless: true` はWebP専用で、PNGは常に可逆圧縮です。`subdir` は `notes.dir` 直下の安全な単一フォルダ名です。`enabled: false` は生成を停止し、既存のcoverを保持します。手動指定のcover・旧画像は変更・削除しません。設定を変えたシート方式は再描画しますが、旧形式の同期済みキャッシュは変換して利用できます。

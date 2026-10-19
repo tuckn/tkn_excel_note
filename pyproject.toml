@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tkn-excel-note"
-version = "4.0.0"
+version = "4.2.0"
 description = "Create and update Excel proxy Markdown notes with optional AI context."
 readme = "README.md"
 requires-python = ">=3.11"

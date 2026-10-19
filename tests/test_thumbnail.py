@@ -17,7 +17,7 @@ from excel_catalog_pipeline.thumbnail import (
     ThumbnailError,
     _placeable_wmf,
     read_thumbnail,
-    thumbnail_png,
+    thumbnail_webp,
 )
 
 from .helpers import create_workbook
@@ -96,12 +96,12 @@ def test_worksheet_image_is_not_a_cover() -> None:
         assert read_thumbnail(archive) is None
 
 
-def test_png_conversion_and_bad_image() -> None:
-    with Image.open(io.BytesIO(thumbnail_png(png()))) as image:
+def test_webp_conversion_and_bad_image() -> None:
+    with Image.open(io.BytesIO(thumbnail_webp(png()))) as image:
         assert image.size == (40, 20)
-        assert image.getpixel((10, 10)) == (255, 0, 0, 255)
+        assert image.convert("RGBA").getpixel((10, 10)) == (255, 0, 0, 255)
     with pytest.raises(ThumbnailError):
-        thumbnail_png(b"bad image")
+        thumbnail_webp(b"bad image")
 
 
 def standard_wmf() -> bytes:
@@ -125,7 +125,7 @@ def test_standard_wmf_header_and_native_conversion() -> None:
         checksum ^= word
     assert checksum == 0
     if hasattr(Image.core, "drawwmf"):
-        with Image.open(io.BytesIO(thumbnail_png(data))) as image:
+        with Image.open(io.BytesIO(thumbnail_webp(data))) as image:
             assert image.size == (40, 20)
     with pytest.raises(ThumbnailError):
         _placeable_wmf(data[:18] + struct.pack("<IH", 0, 0))
@@ -150,9 +150,11 @@ def test_pull_cover_lifecycle(monkeypatch, tmp_path: Path) -> None:  # type: ign
     note_path = tmp_path / "notes" / "book.xlsm.md"
     note = read_note(note_path)
     cover = note.frontmatter["cover"]
-    assert cover.startswith("[[notes/img/excel-cover-")
+    assert cover.startswith("[[notes/thumbnails/excel-cover-")
     asset = tmp_path / cover[2:-2]
-    assert asset.read_bytes().startswith(b"\x89PNG")
+    assert asset.suffix == ".webp"
+    with Image.open(asset) as image:
+        assert image.format == "WEBP"
     assert workbook.read_bytes() == original
     snapshot = {p: p.read_bytes() for p in (note_path, asset, state)}
     assert pull().status == "unchanged"
@@ -208,7 +210,9 @@ def test_manual_cover_and_custom_content_preserved(monkeypatch, tmp_path: Path) 
     text = note.read_text(encoding="utf-8").replace(
         'cover: ""', "cover: https://example.com/manual.png"
     )
-    text = text.replace('type: "excel"', 'custom: keep\ntype: "excel"') + "\n## My notes\nKeep this.\n"
+    text = (
+        text.replace('type: "excel"', 'custom: keep\ntype: "excel"') + "\n## My notes\nKeep this.\n"
+    )
     note.write_text(text, encoding="utf-8")
     set_thumbnail(workbook, png())
     pipeline.run_pull(config, config.sources, write_notes=True, preference=None)
@@ -216,7 +220,7 @@ def test_manual_cover_and_custom_content_preserved(monkeypatch, tmp_path: Path) 
     assert result.frontmatter["cover"] == "https://example.com/manual.png"
     assert result.frontmatter["custom"] == "keep"
     assert "Keep this." in result.body
-    assert not (tmp_path / "notes" / "img").exists()
+    assert not (tmp_path / "notes" / "thumbnails").exists()
 
 
 def test_emf_rasterization_is_bounded() -> None:
@@ -230,7 +234,7 @@ def test_emf_rasterization_is_bounded() -> None:
     struct.pack_into("<4i", header, 72, 1024, 768, 270, 203)
     rectangle = struct.pack("<II4i", 43, 24, 100, 100, 1900, 9900)
     eof = struct.pack("<5I", 14, 20, 0, 0, 20)
-    with Image.open(io.BytesIO(thumbnail_png(bytes(header) + rectangle + eof))) as picture:
+    with Image.open(io.BytesIO(thumbnail_webp(bytes(header) + rectangle + eof))) as picture:
         assert max(picture.size) <= 1200
         assert picture.width / picture.height == pytest.approx(0.2, abs=0.002)
 
@@ -252,3 +256,40 @@ def test_attachment_failure_does_not_publish_a_broken_link(monkeypatch, tmp_path
         pipeline.run_pull(config, config.sources, write_notes=True, preference=None)
     assert not (tmp_path / "notes" / "book.xlsx.md").exists()
     assert not state.exists()
+
+
+def test_legacy_managed_cover_migrates_without_deleting_png(monkeypatch, tmp_path):
+    import json
+
+    (tmp_path / ".obsidian").mkdir()
+    workbook = create_workbook(tmp_path / "workbooks" / "book.xlsx")
+    set_thumbnail(workbook, png())
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline, "state_path", lambda: state)
+
+    def pull(write=True):
+        return pipeline.run_pull(config, config.sources, write_notes=write, preference=None)[0]
+
+    pull()
+    note = tmp_path / "notes" / "book.xlsx.md"
+    current = read_note(note).frontmatter["cover"]
+    asset = tmp_path / current[2:-2]
+    old = tmp_path / "notes" / "img" / "excel-cover-legacy.png"
+    old.parent.mkdir()
+    old.write_bytes(png())
+    legacy = "[[notes/img/excel-cover-legacy.png]]"
+    note.write_text(note.read_text(encoding="utf-8").replace(current, legacy), encoding="utf-8")
+    saved = json.loads(state.read_text(encoding="utf-8"))
+    next(iter(saved["entries"].values()))["managedCover"] = legacy
+    state.write_text(json.dumps(saved), encoding="utf-8")
+    asset.unlink()
+    snapshot = {p: p.read_bytes() for p in (workbook, note, state, old)}
+    assert pull(False).status == "would-update"
+    assert {p: p.read_bytes() for p in snapshot} == snapshot
+    assert not asset.exists()
+    assert pull().status == "updated"
+    assert read_note(note).frontmatter["cover"] == current
+    assert old.read_bytes() == snapshot[old]
+    assert workbook.read_bytes() == snapshot[workbook]
+    assert pull().status == "unchanged"

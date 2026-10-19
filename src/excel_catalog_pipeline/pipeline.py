@@ -305,6 +305,7 @@ def run_pull(
                     note,
                     entry,
                     options=config.cover,
+                    thumbnails=config.thumbnails,
                     render=write_notes,
                     max_workbook_mb=config.context.max_workbook_mb,
                 )
@@ -439,6 +440,7 @@ def run_pull(
                 note,
                 entry,
                 options=config.cover,
+                thumbnails=config.thumbnails,
                 render=write_notes,
                 max_workbook_mb=config.context.max_workbook_mb,
             )

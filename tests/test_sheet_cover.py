@@ -65,6 +65,8 @@ def test_rendered_cover_lifecycle_and_persistent_options(monkeypatch, tmp_path):
     link = read_note(note).frontmatter["cover"]
     asset = tmp_path / link[2:-2]
     with Image.open(asset) as image:
+        assert image.format == "WEBP"
+        assert asset.parent.name == "thumbnails"
         assert image.width == 2400  # No embedded-thumbnail 1200px cap.
     saved = {path: path.read_bytes() for path in (workbook, note, state, asset)}
     assert pull(CoverConfig()).details["cover"]["status"] == "cached"

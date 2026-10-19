@@ -23,6 +23,15 @@ cover:
   range: null  # New sheet covers: A1:Q50
   width: null  # New sheet covers: 2400 px (600-4000)
 
+# Preview only; independent of VLM inputs, with source metadata removed.
+thumbnails:
+  enabled: true
+  subdir: thumbnails
+  max_edge: null  # Preserve existing dimensions; use 480 for compact previews.
+  format: webp  # png / jpeg / webp
+  quality: 85
+  lossless: true  # WebP only; false for quality-based lossy compression.
+
 sync:
   pull_preserves_user_metadata: true
   delete_missing_notes: false

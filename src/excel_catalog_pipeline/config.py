@@ -27,10 +27,12 @@ from .models import (
     SourceConfig,
     SourceGenerationConfig,
     SyncConfig,
+    ThumbnailConfig,
     context_settings,
 )
 from .note_resources import NoteResourceError, load_note_template
 from .paths import global_config_path
+from .thumbnail_settings import validate_thumbnails
 
 SCHEMA_VERSION = "2.1.0"
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -42,6 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "generators": {},
     },
     "cover": asdict(CoverConfig()),
+    "thumbnails": asdict(ThumbnailConfig()),
     "sync": {
         "pull_preserves_user_metadata": True,
         "delete_missing_notes": False,
@@ -50,7 +53,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_extracted_text_chars": 12000,
     },
 }
-TOP_LEVEL_KEYS = {"schema_version", "sources", "sync", "generation", "cover"}
+TOP_LEVEL_KEYS = {"schema_version", "sources", "sync", "generation", "cover", "thumbnails"}
 SYNC_KEYS = set(DEFAULT_CONFIG["sync"])
 SOURCE_KEYS = {"id", "workbooks_dir", "recursive", "include", "ignore", "notes", "generation"}
 NOTES_KEYS = {"dir", "profile", "frontmatter_term_format", "rename_adapter"}
@@ -433,6 +436,7 @@ def validate_config(
     data = _normalize_layer(data)
     try:
         cover = validate_cover(data.get("cover", {}))
+        thumbnails = validate_thumbnails(data.get("thumbnails", {}))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -576,6 +580,7 @@ def validate_config(
         loaded_files=loaded_files,
         context=ContextConfig(**context_values),
         cover=cover,
+        thumbnails=thumbnails,
         default_generator=default_generator,
         generators=generators,
     )
@@ -622,5 +627,6 @@ def config_as_dict(config: AppConfig) -> dict[str, Any]:
             "generators": {name: asdict(spec) for name, spec in config.generators.items()},
         },
         "cover": asdict(config.cover),
+        "thumbnails": asdict(config.thumbnails),
         "loadedConfigFiles": [str(path) for path in config.loaded_files],
     }

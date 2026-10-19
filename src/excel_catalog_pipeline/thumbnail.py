@@ -15,13 +15,15 @@ from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree as ET
 
 from .adapters.markdown import find_obsidian_vault_root
-from .models import ProxyNote, SourceConfig, WorkbookInfo
+from .models import ProxyNote, SourceConfig, ThumbnailConfig, WorkbookInfo
 from .shared_read import read_shared
 
 THUMBNAIL_REL = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"
 MAX_THUMBNAIL_BYTES = 16 * 1024 * 1024
 MAX_PIXELS = 16_000_000
 
+
+DEFAULT_THUMBNAILS = ThumbnailConfig()
 
 class ThumbnailError(ValueError):
     """An optional thumbnail cannot safely be used."""
@@ -95,7 +97,7 @@ def _placeable_wmf(data: bytes) -> bytes:
     raise ThumbnailError("WMF has no initial window dimensions")
 
 
-def thumbnail_png(data: bytes) -> bytes:
+def thumbnail_webp(data: bytes, settings: ThumbnailConfig = DEFAULT_THUMBNAILS) -> bytes:
     """Convert locally using Pillow (Windows also supports EMF/WMF)."""
     from PIL import Image
     from PIL.WmfImagePlugin import WmfStubImageFile
@@ -116,9 +118,7 @@ def thumbnail_png(data: bytes) -> bytes:
                     raise ThumbnailError("Thumbnail exceeds the pixel limit")
                 picture.load()
             picture.thumbnail((1200, 1200))
-            output = io.BytesIO()
-            picture.convert("RGBA").save(output, format="PNG")
-            return output.getvalue()
+            return encode_thumbnail(picture, settings)
     except (
         OSError,
         ValueError,
@@ -135,7 +135,7 @@ class CoverPlan:
     value: Any = ""
     managed: str = ""
     path: Path | None = None
-    png: bytes = b""
+    image: bytes = b""
     asset_changed: bool = False
     warning: str = ""
     generation: dict[str, Any] | None = None
@@ -154,7 +154,7 @@ class CoverPlan:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex[:8]}.tmp")
         try:
-            temporary.write_bytes(self.png)
+            temporary.write_bytes(self.image)
             temporary.replace(self.path)
         finally:
             temporary.unlink(missing_ok=True)
@@ -165,6 +165,7 @@ def plan_cover(
     source: SourceConfig,
     note: ProxyNote | None,
     entry: dict[str, Any] | None,
+    settings: ThumbnailConfig = DEFAULT_THUMBNAILS,
 ) -> CoverPlan:
     current = note.frontmatter.get("cover", "") if note else ""
     managed = str((entry or {}).get("managedCover", ""))
@@ -179,8 +180,8 @@ def plan_cover(
                 data = read_thumbnail(archive)
         if data is None:
             return CoverPlan()
-        png = thumbnail_png(data)
-        return attachment_plan(png, source)
+        image = thumbnail_webp(data, settings)
+        return attachment_plan(image, source, settings)
     except (
         OSError,
         ValueError,
@@ -193,13 +194,51 @@ def plan_cover(
         return CoverPlan(current, managed, warning=f"Thumbnail unavailable ({type(exc).__name__})")
 
 
-def attachment_plan(png: bytes, source: SourceConfig) -> CoverPlan:
-    digest = hashlib.sha256(png).hexdigest()
-    target = source.note_root / "img" / f"excel-cover-{digest}.png"
+def attachment_plan(
+    image: bytes, source: SourceConfig, settings: ThumbnailConfig = DEFAULT_THUMBNAILS
+) -> CoverPlan:
+    digest = hashlib.sha256(image).hexdigest()
+    target = (
+        source.note_root / settings.subdir / f"excel-cover-{digest}.{thumbnail_extension(settings)}"
+    )
     vault = find_obsidian_vault_root(source.note_root)
     relative = target.resolve().relative_to(vault).as_posix()
     if any(char in relative for char in "[]|#^\r\n"):
         raise ThumbnailError("Attachment path contains unsupported Obsidian link characters")
     link = f"[[{relative}]]"
-    changed = not target.is_file() or target.read_bytes() != png
-    return CoverPlan(link, link, target, png, changed)
+    changed = not target.is_file() or target.read_bytes() != image
+    return CoverPlan(link, link, target, image, changed)
+
+
+def thumbnail_extension(settings: ThumbnailConfig) -> str:
+    return "jpg" if settings.format == "jpeg" else settings.format
+
+
+def encode_thumbnail(picture: Any, settings: ThumbnailConfig) -> bytes:
+    from PIL import Image
+
+    resized = picture.convert("RGBA")
+    if settings.max_edge is not None:
+        resized.thumbnail((settings.max_edge, settings.max_edge), Image.Resampling.LANCZOS)
+    # Start from fresh pixels so source EXIF/ICC/XMP never enters a preview.
+    clean = Image.new("RGBA" if settings.format != "jpeg" else "RGB", resized.size, "white")
+    if settings.format == "jpeg":
+        clean.paste(resized, mask=resized.getchannel("A"))
+    else:
+        clean.paste(resized)
+    options: dict[str, Any] = {}
+    if settings.format != "png":
+        options["quality"] = settings.quality
+    if settings.format == "webp":
+        options.update(lossless=settings.lossless, method=6)
+    output = io.BytesIO()
+    clean.save(output, format=settings.format.upper(), **options)
+    return output.getvalue()
+
+
+def cover_webp(data: bytes, settings: ThumbnailConfig = DEFAULT_THUMBNAILS) -> bytes:
+    """Encode a rendered cover using the configured preview settings."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as picture:
+        return encode_thumbnail(picture, settings)
