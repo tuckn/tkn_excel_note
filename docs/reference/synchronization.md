@@ -159,14 +159,14 @@ tkn-excel-note adopt --source workbooks
 `push` は、最初に入力フォルダとノートの設定を表示し、ノート名とブックの相対パスで結果を表示します。
 変更のなかった対象（`unchanged`）は個別に表示せず、最後の集計に件数だけを出します。
 
-標準出力には、コマンドの結果を JSON で出力します。`config list` の既定出力は1行ごとの `key=value` です。
+標準出力は全コマンドで1行ごとの `key=value` が既定です。`--json` で1つの JSON document に切り替えます。[CLI出力契約](cli-output.md)を参照してください。
 
 | コマンド | 標準出力 | 保存するもの |
 | --- | --- | --- |
-| `status`、`--dry-run` なしの `pull` / `push` / `adopt` / `delete-notes` | 1行の JSON | 実行レポート |
-| `--dry-run` 付きの各コマンド | 1行の JSON | なし |
-| `export` | 1行の JSON | なし（AI の使用量の記録を除く） |
-| `config init` / `workbook list-sheets` | 1行の JSON | `config init` は設定ファイル。`workbook list-sheets` は読み取りのみ |
+| `status`、`--dry-run` なしの `pull` / `push` / `adopt` / `delete-notes` | 一覧（`--json` で JSON） | 実行レポート |
+| `--dry-run` 付きの各コマンド | 一覧（`--json` で JSON） | なし |
+| `export` | 一覧（`--json` で JSON） | なし（AI の使用量の記録を除く） |
+| `config init` / `workbook list-sheets` | 一覧（`--json` で JSON） | `config init` は設定ファイル。`workbook list-sheets` は読み取りのみ |
 | `config list` | 1行ごとの `key=value`（`--json` で1行の JSON） | なし |
 
 `pull --context` の結果 JSON には、その実行の AI の使用量（`usage`）が含まれます。

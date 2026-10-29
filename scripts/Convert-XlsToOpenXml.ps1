@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 
 <#
 .SYNOPSIS
@@ -12,8 +12,8 @@ files are skipped.
 
 Normal execution creates the converted workbooks. Add -DryRun to validate the
 inputs and show the planned destinations without creating output folders or
-workbooks. Progress is written to stderr and one summary-only JSON result is
-written to stdout. The JSON does not repeat the per-workbook results.
+workbooks. Progress is written to stderr. Results use key=value lines by default;
+-Json selects JSON and -FullOutput includes unchanged/skipped items.
 
 .PARAMETER SourcePath
 Source folder containing the legacy .xls workbooks to convert. Defaults to the
@@ -55,9 +55,45 @@ param(
 
     [switch]$DryRun,
 
-    [switch]$Write
+    [switch]$Write,
+
+    [switch]$Json,
+
+    [switch]$FullOutput,
+
+    [switch]$Quiet
 )
 
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
+function Write-ResultValue {
+    param($Value, [string]$Key = "")
+    if ($Value -is [System.Collections.IDictionary]) {
+        if ($Value.Count -eq 0) { [Console]::Out.WriteLine("$Key={}") }
+        foreach ($child in $Value.Keys) {
+            $next = if ($Key) { "$Key.$child" } else { [string]$child }
+            Write-ResultValue $Value[$child] $next
+        }
+    } elseif ($Value -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($property in $Value.PSObject.Properties) {
+            Write-ResultValue $property.Value "$Key.$($property.Name)"
+        }
+    } elseif ($Value -is [System.Collections.IList]) {
+        if ($Value.Count -eq 0) { [Console]::Out.WriteLine("$Key=[]") }
+        for ($index = 0; $index -lt $Value.Count; $index++) {
+            Write-ResultValue $Value[$index] "$Key[$index]"
+        }
+    } else {
+        $text = if ($null -eq $Value) { "null" } elseif ($Value -is [bool]) { $Value.ToString().ToLowerInvariant() } else { [string]$Value }
+        $text = [regex]::Replace($text, '[\x00-\x1f\x7f-\x9f\u2028\u2029]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+        [Console]::Out.WriteLine("$Key=$text")
+    }
+}
+function Write-FinalResult {
+    param($Value)
+    if ($Json) { $Value | ConvertTo-Json -Depth 30 -Compress } else { Write-ResultValue $Value }
+}
+try {
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -76,7 +112,9 @@ function Write-ProgressLine {
         [string]$Message
     )
 
-    [Console]::Error.WriteLine("[{0}] {1}", $Level, $Message)
+    if (-not $Quiet -or $Level -in @("ERROR", "CRITICAL")) {
+        [Console]::Error.WriteLine("[{0}] {1}", $Level, $Message)
+    }
 }
 
 function Add-Result {
@@ -275,8 +313,18 @@ $summary = [ordered]@{
     counts          = $counts
 }
 
-$summary | ConvertTo-Json -Depth 5 -Compress
+$summary.status = if (($counts.error + $counts.collision) -gt 0) { "error" } else { "success" }
+$summary.results = @($results | Where-Object { $FullOutput -or $_.status -notin @("skipped", "unchanged") })
+$summary.omittedResults = $results.Count - $summary.results.Count
+if ($summary.omittedResults -gt 0) { $summary.detailsHint = "Use -FullOutput for every item." }
+Write-FinalResult $summary
 
 if (($counts.error + $counts.collision) -gt 0) {
+    exit 1
+}
+
+} catch {
+    [Console]::Error.WriteLine("[ERROR] {0}", $_.Exception.Message)
+    Write-FinalResult ([ordered]@{status="error"; sourcePath=$SourcePath; message=$_.Exception.Message})
     exit 1
 }

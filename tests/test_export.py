@@ -54,7 +54,7 @@ def environment(tmp_path, monkeypatch):
 def test_plain_export_is_adjacent_and_independent(environment, capsys):
     config, book, calls = environment
     before = book.read_bytes()
-    assert cli.main(["export", str(book)]) == 0
+    assert cli.main(["--json", "export", str(book)]) == 0
     result = json.loads(capsys.readouterr().out)
     output = book.with_name(book.name + ".md")
     note = read_note(output)
@@ -83,14 +83,14 @@ def test_recursive_folder_export_and_single_output(environment, tmp_path, capsys
     other = create_workbook(book.parent / "nested" / "other.xlsm", macro_enabled=True)
     create_workbook(book.parent / "~$locked.xlsx")
     (book.parent / "legacy.xls").write_bytes(b"unsupported")
-    assert cli.main(["export", str(book.parent)]) == 0
+    assert cli.main(["--json", "export", str(book.parent)]) == 0
     assert json.loads(capsys.readouterr().out)["files"] == 2
     assert other.with_name(other.name + ".md").exists()
     assert not (book.parent / "~$locked.xlsx.md").exists()
     output = tmp_path / "custom" / "note.md"
-    assert cli.main(["export", str(book), "--output", str(output)]) == 0
+    assert cli.main(["--json", "export", str(book), "--output", str(output)]) == 0
     assert output.exists()
-    assert cli.main(["export", str(book.parent), "--output", str(tmp_path / "bad.md")]) == 3
+    assert cli.main(["--json", "export", str(book.parent), "--output", str(tmp_path / "bad.md")]) == 3
     assert json.loads(capsys.readouterr().out.splitlines()[-1])["status"] == "config-error"
     assert not (tmp_path / "bad.md").exists()
 
@@ -99,12 +99,12 @@ def test_existing_output_requires_force_and_bad_workbook_preserves_it(environmen
     _, book, calls = environment
     output = book.with_name(book.name + ".md")
     output.write_text("My existing document.", encoding="utf-8")
-    assert cli.main(["export", str(book), "--context"]) == 1
+    assert cli.main(["--json", "export", str(book), "--context"]) == 1
     assert output.read_text() == "My existing document." and not calls
-    assert cli.main(["export", str(book), "--force"]) == 0
+    assert cli.main(["--json", "export", str(book), "--force"]) == 0
     before = output.read_bytes()
     book.write_bytes(b"not a workbook")
-    assert cli.main(["export", str(book), "--force"]) == 1
+    assert cli.main(["--json", "export", str(book), "--force"]) == 1
     assert output.read_bytes() == before
     assert not paths.app_root().exists()
 
@@ -114,7 +114,7 @@ def test_dry_run_creates_nothing(environment, tmp_path, capsys, options):
     _, book, calls = environment
     before = set(tmp_path.rglob("*"))
     output = tmp_path / "new-folder" / "note.md"
-    assert cli.main(["export", str(book), "--output", str(output), "--dry-run", *options]) == 0
+    assert cli.main(["--json", "export", str(book), "--output", str(output), "--dry-run", *options]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["planned"] == 1 and result["usage"]["calls"] == 0
     assert set(tmp_path.rglob("*")) == before and not calls
@@ -123,7 +123,7 @@ def test_dry_run_creates_nothing(environment, tmp_path, capsys, options):
 def test_context_export_has_overview_images_and_no_persistent_cache(environment, capsys):
     _, book, calls = environment
     before = book.read_bytes()
-    assert cli.main(["export", str(book), "--context"]) == 0
+    assert cli.main(["--json", "export", str(book), "--context"]) == 0
     result = json.loads(capsys.readouterr().out)
     output = book.with_name(book.name + ".md")
     note = read_note(output)
@@ -146,7 +146,7 @@ def test_context_export_has_overview_images_and_no_persistent_cache(environment,
     assert images[0].relative_to(book.parent).as_posix() in note.body
     assert not paths.state_path().exists() and not (paths.state_root() / "context").exists()
     assert book.read_bytes() == before
-    assert cli.main(["export", str(book), "--context", "--force"]) == 0
+    assert cli.main(["--json", "export", str(book), "--context", "--force"]) == 0
     assert calls == ["sheet", "workbook", "sheet", "workbook"]
     assert images[0].exists()
 
@@ -163,7 +163,7 @@ def test_failed_overview_keeps_existing_output_and_published_assets(environment,
         return generate(*args, **kwargs)
 
     monkeypatch.setattr(context, "generate_markdown", fail)
-    assert cli.main(["export", str(book), "--context", "--force"]) == 1
+    assert cli.main(["--json", "export", str(book), "--context", "--force"]) == 1
     assert output.read_text() == "Reviewed output."
     assert not (book.parent / "img").exists()
     assert not paths.state_path().exists()
@@ -180,7 +180,7 @@ def test_edit_during_generation_is_preserved(environment, monkeypatch):
         return generate(*args, **kwargs)
 
     monkeypatch.setattr(context, "generate_markdown", edit)
-    assert cli.main(["export", str(book), "--context", "--force"]) == 1
+    assert cli.main(["--json", "export", str(book), "--context", "--force"]) == 1
     assert output.read_text() == "User edit during generation."
     assert not list(book.parent.glob(".*.export-lock"))
 
@@ -199,7 +199,7 @@ def test_export_retains_long_text_and_formulas(environment):
             book.read_bytes(), {"xl/sharedStrings.xml": shared, "xl/worksheets/sheet1.xml": sheet}
         )
     )
-    assert cli.main(["export", str(book)]) == 0
+    assert cli.main(["--json", "export", str(book)]) == 0
     text = book.with_name(book.name + ".md").read_text(encoding="utf-8")
     assert "X" * 20000 + "END" in text and "Formula: SUM(A2:A4)" in text
 
@@ -207,7 +207,7 @@ def test_export_retains_long_text_and_formulas(environment):
 def test_folder_failure_reports_each_book_and_preserves_success(environment, capsys):
     _, book, _ = environment
     (book.parent / "broken.xlsx").write_bytes(b"broken")
-    assert cli.main(["export", str(book.parent)]) == 1
+    assert cli.main(["--json", "export", str(book.parent)]) == 1
     result = json.loads(capsys.readouterr().out)
     assert result["files"] == 2 and result["exported"] == 1 and result["errors"] == 1
     assert book.with_name(book.name + ".md").exists()
@@ -221,7 +221,7 @@ def test_source_commands_require_explicit_source(command, monkeypatch):
 
     monkeypatch.setattr(cli, "load_config", forbidden)
     with pytest.raises(SystemExit) as error:
-        cli.main([command, *(["--all-missing"] if command == "delete-notes" else [])])
+        cli.main(["--json", command, *(["--all-missing"] if command == "delete-notes" else [])])
     assert error.value.code == 2
 
 
@@ -251,7 +251,7 @@ def test_publication_failure_releases_lock_and_keeps_previous_output(environment
             raise OSError("Synthetic publication failure")
 
     monkeypatch.setattr(export_module, "_unchanged_output", fail)
-    assert cli.main(["export", str(book), "--force"]) == 1
+    assert cli.main(["--json", "export", str(book), "--force"]) == 1
     assert output.read_text() == "Previous output."
     assert not list(book.parent.glob(".*.export-lock"))
     assert not list(book.parent.glob(".*.tmp"))
@@ -262,6 +262,6 @@ def test_export_does_not_read_existing_sync_state(environment):
     paths.state_root().mkdir(parents=True)
     paths.state_path().write_bytes(b"invalid synchronization data")
     before = {path: path.read_bytes() for path in paths.app_root().rglob("*") if path.is_file()}
-    assert cli.main(["export", str(book), "--context"]) == 0
+    assert cli.main(["--json", "export", str(book), "--context"]) == 0
     assert {path: path.read_bytes() for path in before} == before
     assert not (paths.state_root() / "context").exists()

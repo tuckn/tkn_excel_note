@@ -182,7 +182,7 @@ tkn-excel-note export "C:\path\to\book.xlsx"
 ブックと同じフォルダに `book.xlsx.md` が作成されます。
 出力のファイル名は、拡張子を含む元のファイル名に `.md` を付けたものです。
 
-完了すると、標準出力に1行の結果 JSON が表示されます。
+完了すると、標準出力に1行ごとの `key=value` で結果が表示されます。
 `"status":"success"` と `"exported":1` であれば、書き出しは成功しています。
 作成した Markdown には、次の内容が入ります。
 
@@ -270,7 +270,7 @@ tkn-excel-note export "C:\path\to\workbooks"
 ```
 
 フォルダを指定した場合、`--output` は使えません。
-一部のブックで失敗しても、ほかのブックの出力は保存し、失敗したブックを結果 JSON の `results` に `export-error` として報告します。
+一部のブックで失敗しても、ほかのブックの出力は保存し、失敗したブックを結果の `results` に `export-error` として報告します。
 
 ### 3.6. 書き出し直す
 
@@ -323,7 +323,7 @@ flowchart LR
 tkn-excel-note config init
 ```
 
-`~/.tkn/excel_note/config.yaml` が作成され、そのパスが結果 JSON の `configPath` に表示されます。
+`~/.tkn/excel_note/config.yaml` が作成され、そのパスが結果の `configPath` に表示されます。
 内容の異なるファイルが既にある場合は、エラーになり置き換えません。
 
 作成したファイルの `sources` を、自分の入力フォルダとノート保存先に書き換えます。
@@ -518,8 +518,23 @@ tkn-excel-note pull --source workbooks --cover sheet --cover-range "A1:Q50"
 
 ## 6. 実行結果の読み方
 
-処理の進捗は標準エラー出力に、処理結果は標準出力に1行の JSON で出力します。
-`config list` は既定で1行ごとの `key=value` を表示し、`--json` で JSON に切り替えます。
+すべての Python CLI は、結果を標準出力に1行ごとの `key=value` で表示します。
+入れ子は `.`、配列は `[0]`、空の配列・mappingは `[]` / `{}`、真偽値は `true` / `false`、未設定値は `null` です。
+文字列は引用符で囲まず、Windows パスは省略・二重エスケープせず表示し、制御文字だけエスケープします。
+`--json` は標準出力を1つの JSON document に切り替えます。進捗・警告・診断は常に標準エラーです。
+`--json` と `--full-output` はコマンドの前後・多段コマンドの途中にも指定できます。
+`--quiet` / `--verbose` はログ量だけを変え、TTY・パイプ・リダイレクトでも結果形式は変わりません。
+変更なし・skip の詳細は件数に集約し、省略があれば `detailsHint` に確認方法を示します。
+失敗・要確認対象は `results` に残り、パスと理由を別項目で確認できます。`--full-output` は両形式で全対象の詳細を含めます。
+
+```shell
+tkn-excel-note pull --source workbooks --dry-run
+tkn-excel-note --json pull --source workbooks --dry-run
+tkn-excel-note pull --source workbooks --dry-run --full-output --json
+```
+
+PowerShell の `Convert-XlsToOpenXml.ps1` はネイティブの `-Json` / `-FullOutput` / `-Quiet` を使用します。
+詳細は[CLI出力契約](docs/reference/cli-output.md)を参照してください。
 スクリプトから利用する場合は、標準出力の JSON と終了コードで結果を判定できます。
 
 | 終了コード | 意味 |

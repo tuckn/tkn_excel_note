@@ -165,7 +165,7 @@ def test_config_list_rejects_invalid_config_without_writes(tmp_path, capsys, con
     path.write_text(contents, encoding="utf-8")
     assert cli_module.main(["config", "list", *(["--json"] if json_output else [])]) == 3
     captured = capsys.readouterr()
-    assert json.loads(captured.out)["status"] == "config-error"
+    assert (json.loads(captured.out)["status"] == "config-error") if json_output else "status=config-error" in captured.out
     assert "[ERROR]" in captured.err
     assert "Traceback" not in captured.err
     assert path.read_text(encoding="utf-8") == contents

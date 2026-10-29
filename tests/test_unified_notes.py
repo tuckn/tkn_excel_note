@@ -57,7 +57,7 @@ def setup(tmp_path, monkeypatch):
 
 
 def pull(book, output=None, *options):
-    return cli.main(["pull", "--source", "library", *options])
+    return cli.main(["--json", "pull", "--source", "library", *options])
 
 
 def change_cell(book):
@@ -84,7 +84,7 @@ def test_source_create_update_push_preserves_identity_and_user_text(setup):
     assert read_note(output).note_id == first.note_id
     assert "Keep this." in read_note(output).body
     body_before_push = read_note(output).body
-    assert cli.main(["push", "--source", "library", "--note", str(output)]) == 0
+    assert cli.main(["--json", "push", "--source", "library", "--note", str(output)]) == 0
     assert read_note(output).body == body_before_push
     with zipfile.ZipFile(book) as archive:
         assert read_core_properties(archive)["title"] == "Edited title"
@@ -154,14 +154,14 @@ def test_source_root_change_preserves_note_and_base(setup, monkeypatch):
         frontmatter_term_format="plain",
     )
     monkeypatch.setattr(cli, "load_config", lambda **kwargs: replace(config, sources=(source,)))
-    assert cli.main(["pull", "--source", "library"]) == 0
+    assert cli.main(["--json", "pull", "--source", "library"]) == 0
     note = read_note(output)
     assert note.note_id == note_id and note.frontmatter["title"] == "My title"
     assert note.frontmatter["sourceFileName"] == "nested/book.xlsx"
     assert list(output.parent.rglob("*.md")) == [output]
     state = json.loads(paths.state_path().read_text(encoding="utf-8"))
     assert len(state["entries"]) == 1
-    assert cli.main(["push", "--source", "library", "--note", str(output)]) == 0
+    assert cli.main(["--json", "push", "--source", "library", "--note", str(output)]) == 0
     with zipfile.ZipFile(book) as archive:
         assert read_core_properties(archive)["title"] == "My title"
 
@@ -195,7 +195,7 @@ def test_batch_ai_uses_same_note_format(setup, monkeypatch):
     create_workbook(book.parent / "second.xlsx")
     source = SourceConfig("library", book.parent, ("*.xlsx",), output.parent)
     monkeypatch.setattr(cli, "load_config", lambda **kwargs: replace(config, sources=(source,)))
-    assert cli.main(["pull", "--source", "library", "--context"]) == 0
+    assert cli.main(["--json", "pull", "--source", "library", "--context"]) == 0
     notes = list(output.parent.glob("*.md"))
     assert len(notes) == 2 and len(calls) == 4
     assert all(read_note(note).frontmatter["contextStatus"] == "current" for note in notes)
@@ -210,7 +210,7 @@ def test_conflicting_changes_do_not_overwrite_either_side(setup):
     )
     create_workbook(book, title="Excel edit")
     before = book.read_bytes(), output.read_bytes()
-    assert cli.main(["push", "--source", "library", "--note", str(output)]) == 2
+    assert cli.main(["--json", "push", "--source", "library", "--note", str(output)]) == 2
     assert (book.read_bytes(), output.read_bytes()) == before
 
 
@@ -325,7 +325,7 @@ def test_relative_sheet_listing_needs_no_note_or_state(setup, monkeypatch, capsy
     monkeypatch.chdir(book.parent.parent)
     unrelated = book.with_name(book.name + ".md")
     unrelated.write_text("An unrelated document.", encoding="utf-8")
-    assert cli.main(["workbook", "list-sheets", "--workbook", "nested/book.xlsx"]) == 0
+    assert cli.main(["--json", "workbook", "list-sheets", "--workbook", "nested/book.xlsx"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["sheets"][0]["name"] == "Data"
     assert not paths.app_root().exists() and not calls
@@ -493,8 +493,8 @@ def test_pull_selected_workbook_and_sheet_only(setup, capsys, dry_run):
     other_before = other.read_bytes()
 
     assert cli.main(
-        ["pull", "--source", "library", book.name, "--sheet", "Data", "--context"]
-        + (["--dry-run"] if dry_run else [])
+        ["--json", *(["pull", "--source", "library", book.name, "--sheet", "Data", "--context"]
+        + (["--dry-run"] if dry_run else []))]
     ) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["statusCounts"] == {"would-create" if dry_run else "created": 1}

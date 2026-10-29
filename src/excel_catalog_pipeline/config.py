@@ -63,6 +63,9 @@ FRONTMATTER_TERM_FORMATS = {"obsidian-link", "plain"}
 class ConfigError(ValueError):
     """Configuration could not be loaded or validated."""
 
+    config_path: Path | None = None
+    config_paths: tuple[Path, ...] = ()
+
 
 class ConfigLoader(yaml.SafeLoader):
     """Reject duplicate explicit YAML keys instead of silently losing settings."""
@@ -389,9 +392,13 @@ def load_config(*, explicit: Path | None = None, cwd: Path | None = None) -> App
     origins = dict.fromkeys(config_leaves(DEFAULT_CONFIG), "built-in")
     for path in candidates:
         if path.exists():
-            raw = _read_yaml(path)
-            layer = _normalize_layer(raw, base_dir=path.parent)
-            validate_config(_deep_merge(DEFAULT_CONFIG, layer), check_generator_links=False)
+            try:
+                raw = _read_yaml(path)
+                layer = _normalize_layer(raw, base_dir=path.parent)
+                validate_config(_deep_merge(DEFAULT_CONFIG, layer), check_generator_links=False)
+            except ConfigError as exc:
+                exc.config_path = path.absolute()
+                raise
             source_items = raw.get("sources", {})
             legacy_items = source_items if isinstance(source_items, list) else source_items.values()
             migrated = raw.get("schema_version") != SCHEMA_VERSION or isinstance(source_items, list)
@@ -414,7 +421,11 @@ def load_config(*, explicit: Path | None = None, cwd: Path | None = None) -> App
         elif explicit is not None and path == explicit.expanduser().resolve():
             raise ConfigError(f"Explicit config not found: {path}")
 
-    config = validate_config(merged, loaded_files=tuple(loaded))
+    try:
+        config = validate_config(merged, loaded_files=tuple(loaded))
+    except ConfigError as exc:
+        exc.config_paths = tuple(loaded)
+        raise
     resolved = config_as_dict(config)
     resolved.pop("loadedConfigFiles")
     selected = config.generators.get(config.default_generator or "")

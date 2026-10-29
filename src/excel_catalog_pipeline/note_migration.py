@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import sys
@@ -14,6 +13,7 @@ from typing import Any
 import yaml
 
 from .note_frontmatter import FENCE, NoteFrontmatterError, NoteLoader, normalize_note
+from .output import ResultParser, add_output_options, emit, error_targets
 
 
 @dataclass(frozen=True)
@@ -156,7 +156,7 @@ def apply(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    parser = ResultParser(
         description="Normalize Excel proxy-note Frontmatter; backs up before writing."
     )
     parser.add_argument("--root", required=True, type=Path)
@@ -170,27 +170,42 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Validate and count only; do not write notes, reports or backups.",
     )
-    args = parser.parse_args(argv)
-    if not args.dry_run and args.backup_dir is None:
-        parser.error("--backup-dir is required unless --dry-run is selected")
-    print("Validating proxy-note YAML and body preservation...", file=sys.stderr)
+    add_output_options(parser)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    tokens = argv[:argv.index("--")] if "--" in argv else argv
+    json_output = "--json" in tokens
+    try:
+        args = parser.parse_args(argv)
+        if getattr(args, "quiet", False) and getattr(args, "verbose", False):
+            parser.error("--quiet and --verbose cannot be combined")
+        if not args.dry_run and args.backup_dir is None:
+            parser.error("--backup-dir is required unless --dry-run is selected")
+    except SystemExit as exc:
+        if exc.code:
+            emit({"status": "argument-error", "message": getattr(exc, "message", "Invalid arguments; see stderr and --help.")}, json_output=json_output)
+        raise
+    if not getattr(args, "quiet", False):
+        print("[INFO] Validating proxy-note YAML and body preservation...", file=sys.stderr)
     try:
         changes, counts = plan(args.root)
         if args.dry_run:
             report = {**counts, "dry_run": True, "written": 0}
         else:
-            print(f"Backing up and updating {len(changes)} notes...", file=sys.stderr)
+            if not getattr(args, "quiet", False):
+                print(f"[INFO] Backing up and updating {len(changes)} notes...", file=sys.stderr)
             report = apply(args.root, args.backup_dir, changes, counts)
+    except KeyboardInterrupt:
+        print("[ERROR] Migration interrupted; originals or recovery backups are retained.", file=sys.stderr)
+        emit({"status": "interrupted", **error_targets(args)}, json_output=json_output)
+        return 130
     except Exception as exc:
         print(
             f"Migration stopped ({type(exc).__name__}); originals or recovery backups are retained.",
             file=sys.stderr,
         )
-        print(
-            json.dumps({"status": "error", "error_type": type(exc).__name__}, separators=(",", ":"))
-        )
+        emit({"status": "error", "error_type": type(exc).__name__, **error_targets(args, exc)}, json_output=json_output)
         return 1
-    print(json.dumps(report, separators=(",", ":")))
+    emit(report, json_output=json_output)
     return 0
 
 

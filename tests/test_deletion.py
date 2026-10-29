@@ -254,7 +254,7 @@ def test_cli_preview_and_normal_execution_have_compact_json(catalog, monkeypatch
         "--all-missing",
     ]
     before = snapshot(root)
-    assert main([*args, "--dry-run"]) == 0
+    assert main(["--json", *args, "--dry-run"]) == 0
     output = capsys.readouterr()
     payload = json.loads(output.out)
     assert len(output.out.splitlines()) == 1
@@ -262,7 +262,7 @@ def test_cli_preview_and_normal_execution_have_compact_json(catalog, monkeypatch
     assert payload["statusCounts"] == {"would-delete": 2}
     assert "[would-delete]" in output.err
     assert snapshot(root) == before
-    assert main(args) == 0
+    assert main(["--json", *(args)]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["statusCounts"] == {"deleted": 2}
     assert Path(payload["backupPath"]).is_dir()
@@ -272,7 +272,7 @@ def test_cli_preview_and_normal_execution_have_compact_json(catalog, monkeypatch
 @pytest.mark.parametrize("args", [[], ["--note", "first.xlsx.md", "--all-missing"]])
 def test_cli_requires_explicit_unambiguous_deletion_mode(args):  # type: ignore[no-untyped-def]
     with pytest.raises(SystemExit) as exc:
-        main(["delete-notes", *args])
+        main(["--json", "delete-notes", *args])
     assert exc.value.code == 2
 
 

@@ -46,7 +46,7 @@ sources:
     monkeypatch.setattr(config_module, "global_config_path", lambda: tmp_path / "user.yaml")
 
     result = main(
-        [
+        ["--json",
             "--config",
             str(config),
             "workbook",
@@ -107,7 +107,7 @@ def test_old_context_sheets_command_is_not_available() -> None:
 
 def test_mutating_command_help_explains_normal_write_and_dry_run(capsys) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(SystemExit) as exc_info:
-        main(["pull", "--help"])
+        main(["--json", "pull", "--help"])
     captured = capsys.readouterr()
     assert exc_info.value.code == 0
     assert "Normal execution writes proxy notes" in captured.out
@@ -125,7 +125,7 @@ def test_mutating_command_help_explains_normal_write_and_dry_run(capsys) -> None
 def test_config_list_prints_compact_json_without_header(monkeypatch, tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "config.yaml"
     config.write_text("schema_version: 1\nsources: {}\n", encoding="utf-8")
-    result = main(["--config", "config.yaml", "config", "list", "--json"])
+    result = main(["--json", "--config", "config.yaml", "config", "list", "--json"])
     captured = capsys.readouterr()
     assert result == 0
     payload = json.loads(captured.out)
@@ -141,7 +141,7 @@ def test_config_init_creates_user_config(monkeypatch, tmp_path: Path, capsys) ->
     target = tmp_path / "user" / "config.yaml"
     monkeypatch.setattr(config_module, "global_config_path", lambda: target)
 
-    result = main(["config", "init"])
+    result = main(["--json", "config", "init"])
     payload = json.loads(capsys.readouterr().out)
     assert result == 0
     assert payload == {
@@ -151,7 +151,7 @@ def test_config_init_creates_user_config(monkeypatch, tmp_path: Path, capsys) ->
     }
     assert target.exists()
 
-    result = main(["config", "init"])
+    result = main(["--json", "config", "init"])
     payload = json.loads(capsys.readouterr().out)
     assert result == 0
     assert payload["status"] == "unchanged"
@@ -177,7 +177,7 @@ sources:
     )
     monkeypatch.setattr(pipeline_module, "state_path", lambda: tmp_path / "state.json")
     result = main(
-        [
+        ["--json",
             "--config",
             str(config),
             "--report-dir",
@@ -225,7 +225,7 @@ sources:
     monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
 
     result = main(
-        [
+        ["--json",
             "--config",
             str(config),
             "--report-dir",
@@ -297,7 +297,7 @@ sources:
         ]
 
     monkeypatch.setattr(cli_module, "run_status", fake_run_status)
-    result = main(["--config", str(config), "--report-dir", str(tmp_path / "reports"), "status", "--source", "example"])
+    result = main(["--json", "--config", str(config), "--report-dir", str(tmp_path / "reports"), "status", "--source", "example"])
     captured = capsys.readouterr()
 
     assert result == 0
@@ -379,7 +379,7 @@ sources:
 
     monkeypatch.setattr(cli_module, "run_push", fake_run_push)
     result = main(
-        [
+        ["--json",
             "--config",
             str(config),
             "--report-dir",
@@ -471,7 +471,7 @@ sources:
 
     monkeypatch.setattr(cli_module, "run_pull", fake_run_pull)
     result = main(
-        [
+        ["--json",
             "-v",
             "--config",
             str(config),
@@ -524,7 +524,7 @@ def test_legacy_write_option_is_accepted_with_deprecation_warning(
 
     monkeypatch.setattr(cli_module, "run_pull", fake_run_pull)
     result = main(
-        [
+        ["--json",
             "--config",
             str(config),
             "--report-dir",
@@ -566,7 +566,7 @@ def test_cli_push_dry_run_validates_allowed_rename_without_report(
 
     monkeypatch.setattr(cli_module, "run_push", fake_run_push)
     result = main(
-        [
+        ["--json",
             "--config",
             str(config),
             "--report-dir",
@@ -605,7 +605,7 @@ def test_cli_adopt_dry_run_lists_targets_without_report(
 
     monkeypatch.setattr(cli_module, "run_adopt", fake_run_adopt)
     result = main(
-        [
+        ["--json",
             "--config",
             str(config),
             "--report-dir",
@@ -632,7 +632,7 @@ def test_config_list_uses_source_keys(monkeypatch, tmp_path: Path, capsys) -> No
         "sources:\n  example:\n    id:\n    path: input\n    notes: {root: output}\n",
         encoding="utf-8",
     )
-    assert main(["--config", str(config), "config", "list", "--json"]) == 0
+    assert main(["--json", "--config", str(config), "config", "list", "--json"]) == 0
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert list(payload["config"]["sources"]) == ["example"]
@@ -651,11 +651,11 @@ def test_pull_requires_target_before_config_or_execution(monkeypatch, capsys, op
     for name in ("load_config", "configure_logging", "run_pull", "run_ai_pull"):
         monkeypatch.setattr(cli_module, name, forbidden)
     with pytest.raises(SystemExit) as failure:
-        main(["--config", "missing.yaml", "pull", *options])
+        main(["--json", "--config", "missing.yaml", "pull", *options])
     assert failure.value.code == 2
     captured = capsys.readouterr()
     assert "one of the arguments --source --all-sources is required" in captured.err
-    assert not captured.out
+    assert json.loads(captured.out)["status"] == "argument-error"
 
 
 @pytest.mark.parametrize(
@@ -673,9 +673,9 @@ def test_pull_rejects_ambiguous_targets_before_loading(monkeypatch, capsys, opti
 
     monkeypatch.setattr(cli_module, "load_config", forbidden)
     with pytest.raises(SystemExit) as exc:
-        main(["pull", *options])
+        main(["--json", "pull", *options])
     assert exc.value.code == 2
-    assert "error:" in capsys.readouterr().err
+    assert "[ERROR]" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("context", [False, True])
@@ -712,7 +712,7 @@ def test_pull_selects_only_explicit_targets(
         return []
 
     monkeypatch.setattr(cli_module, "run_ai_pull" if context else "run_pull", run)
-    assert main(["pull", *target, "--dry-run", *(["--context"] if context else [])]) == 0
+    assert main(["--json", "pull", *target, "--dry-run", *(["--context"] if context else [])]) == 0
     assert seen == expected
     assert json.loads(capsys.readouterr().out)["writeEnabled"] is False
 
@@ -723,12 +723,12 @@ def test_profile_auto_is_rejected_before_loading_config(monkeypatch, capsys):
 
     monkeypatch.setattr(cli_module, "load_config", unexpected_load)
     with pytest.raises(SystemExit) as failure:
-        main(["export", "book.xlsx", "--context", "--profile", "auto"])
+        main(["--json", "export", "book.xlsx", "--context", "--profile", "auto"])
     assert failure.value.code == 2
     captured = capsys.readouterr()
     assert "auto' was removed" in captured.err
     assert "default-ja, default-en, or a custom profile" in captured.err
-    assert captured.out == ""
+    assert json.loads(captured.out)["status"] == "argument-error"
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
@@ -758,8 +758,8 @@ def test_pull_all_sources_processes_multiple_workbooks(monkeypatch, tmp_path, ca
     monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
 
     result = main(
-        ["--report-dir", str(reports), "pull", "--all-sources"]
-        + (["--dry-run"] if dry_run else [])
+        ["--json", *(["--report-dir", str(reports), "pull", "--all-sources"]
+        + (["--dry-run"] if dry_run else []))]
     )
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
@@ -791,7 +791,7 @@ def test_pull_all_sources_requires_configured_sources(monkeypatch, capsys):
 
     monkeypatch.setattr(cli_module, "run_pull", forbidden)
     monkeypatch.setattr(cli_module, "write_report", forbidden)
-    assert main(["pull", "--all-sources"]) == 3
+    assert main(["--json", "pull", "--all-sources"]) == 3
     captured = capsys.readouterr()
     assert json.loads(captured.out)["status"] == "config-error"
 
@@ -826,7 +826,7 @@ def test_pull_one_workbook_preserves_other_notes_and_state(
     )
     monkeypatch.setattr(cli_module, "load_config", lambda **kwargs: config)
     monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
-    assert main(["--report-dir", str(tmp_path / "initial-reports"), "pull", "--source", "library"]) == 0
+    assert main(["--json", "--report-dir", str(tmp_path / "initial-reports"), "pull", "--source", "library"]) == 0
     capsys.readouterr()
     original_state = load_state(state)
     selected_note = notes / "nested" / "selected.xlsx.md"
@@ -842,8 +842,8 @@ def test_pull_one_workbook_preserves_other_notes_and_state(
     reports = tmp_path / "selected-reports"
     selector = str(book) if absolute else "nested/selected.xlsx"
     assert main(
-        ["--report-dir", str(reports), "pull", "--source", "library", selector]
-        + (["--dry-run"] if dry_run else [])
+        ["--json", *(["--report-dir", str(reports), "pull", "--source", "library", selector]
+        + (["--dry-run"] if dry_run else []))]
     ) == 0
     captured = capsys.readouterr()
     result = json.loads(captured.out)
@@ -906,7 +906,7 @@ def test_pull_workbook_validates_scope_before_execution(
 
     for name in ("run_pull", "run_ai_pull", "write_report"):
         monkeypatch.setattr(cli_module, name, forbidden)
-    assert main(["pull", "--source", "library", selector, "--context"]) == 3
+    assert main(["--json", "pull", "--source", "library", selector, "--context"]) == 3
     result = json.loads(capsys.readouterr().out)
     assert message in result["message"]
     assert not (tmp_path / "notes").exists()

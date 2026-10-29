@@ -322,7 +322,7 @@ def test_reference_dry_run_failure_happens_before_writes(setup, tmp_path, capsys
     args = ["export", str(book)] if command == "export" else ["pull", "--source", "library"]
     assert (
         cli.main(
-            [*args, "--context", "--dry-run", "--reference-file", str(tmp_path / "missing.md")]
+            ["--json", *args, "--context", "--dry-run", "--reference-file", str(tmp_path / "missing.md")]
         )
         == 3
     )
@@ -349,14 +349,14 @@ def test_reference_dry_run_failure_happens_before_writes(setup, tmp_path, capsys
 def test_generation_options_require_context(setup, capsys, command, option):
     _, book, output, calls = setup
     args = ["export", str(book)] if command == "export" else ["pull", "--source", "library"]
-    assert cli.main([*args, *option]) == 3
+    assert cli.main(["--json", *args, *option]) == 3
     assert "require --context" in capsys.readouterr().err
     assert not output.parent.exists() and not calls
 
 
 def test_cli_rejects_disable_with_inputs(setup, capsys):
     _, book, _, calls = setup
-    assert cli.main(["export", str(book), "--context", "--no-reference", "--reference", "x"]) == 3
+    assert cli.main(["--json", "export", str(book), "--context", "--no-reference", "--reference", "x"]) == 3
     assert "cannot be combined" in capsys.readouterr().err and not calls
 
 
@@ -453,7 +453,7 @@ def test_export_selects_default_generator_ignores_sources_and_passes_both_inputs
     monkeypatch.setattr(context, "generate_markdown", capture)
     assert (
         cli.main(
-            [
+            ["--json",
                 "export",
                 str(book),
                 "--context",

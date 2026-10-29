@@ -35,7 +35,7 @@ contextStatus: not-generated
 ---
 # Manual H1
 
-Untouched user text.  
+Untouched user text.
 """
 
 
@@ -129,11 +129,11 @@ def test_migration_dry_run_backup_verification_and_second_run(tmp_path, capsys):
     untouched = root / "index.md"
     untouched.write_text("# User text", encoding="utf-8")
     backup = tmp_path / "backup"
-    assert note_migration.main(["--root", str(root), "--backup-dir", str(backup), "--dry-run"]) == 0
+    assert note_migration.main(["--json", "--root", str(root), "--backup-dir", str(backup), "--dry-run"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["changed"] == 1 and report["skipped"] == 1
     assert not backup.exists() and note.read_bytes() == LEGACY.encode()
-    assert note_migration.main(["--root", str(root), "--backup-dir", str(backup)]) == 0
+    assert note_migration.main(["--json", "--root", str(root), "--backup-dir", str(backup)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["written"] == report["verified"] == 1
     assert next((backup / "files").glob("*.md")).read_bytes() == LEGACY.encode()

@@ -261,7 +261,7 @@ def test_cli_cover_dry_run_and_option_validation(monkeypatch, tmp_path, capsys):
     workbook, note, state, calls, pull = setup_pull(monkeypatch, tmp_path)
     monkeypatch.setattr(cli, "load_config", lambda **kwargs: app_config(tmp_path))
     result = cli.main(
-        [
+        ["--json",
             "pull",
             "--source",
             "example",
@@ -280,11 +280,11 @@ def test_cli_cover_dry_run_and_option_validation(monkeypatch, tmp_path, capsys):
     assert "B2:R51" in captured.err and "3000" in captured.err
     assert not calls and not state.exists() and not note.exists()
     assert (
-        cli.main(["pull", "--source", "example", "--cover", "sheet", "--cover-range", "Q1:A50"])
+        cli.main(["--json", "pull", "--source", "example", "--cover", "sheet", "--cover-range", "Q1:A50"])
         != 0
     )
     assert (
-        cli.main(["pull", "--source", "example", "--cover", "embedded", "--cover-range", "A1:Q50"])
+        cli.main(["--json", "pull", "--source", "example", "--cover", "embedded", "--cover-range", "A1:Q50"])
         != 0
     )
 

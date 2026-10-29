@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -15,13 +16,14 @@ from typing import Any
 from . import __version__
 from .ai_pull import run_ai_pull, usage_totals
 from .config import ConfigError, config_as_dict, init_user_config, load_config, select_sources
-from .config_display import config_lines
 from .context import resolve_workbook, run_context
 from .context_source import ContextError
 from .cover_settings import validate_cover
 from .deletion import run_delete_notes
 from .export import run_export
 from .models import Action, SourceConfig
+from .output import ResultParser, add_output_options, error_targets, visible_result
+from .output import emit as emit_result
 from .pipeline import run_adopt, run_pull, run_push, run_status
 from .reports import summarize_actions, write_report
 from .state import StateError
@@ -182,7 +184,7 @@ def _add_execution_mode(parser: argparse.ArgumentParser, *, legacy_write_option:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = ResultParser(
         prog="tkn-excel-note",
         description="Create and update Excel proxy Markdown notes, with optional AI context.",
     )
@@ -201,7 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     config_parser = commands.add_parser("config", help="Create or inspect configuration.")
     config_commands = config_parser.add_subparsers(dest="config_command", required=True)
-    config_list = config_commands.add_parser(
+    config_commands.add_parser(
         "list",
         help="List resolved settings and winning sources as key=value lines.",
         description=(
@@ -210,7 +212,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Use --json for a structured JSON result."
         ),
     )
-    config_list.add_argument("--json", action="store_true", help="Print one compact JSON result.")
     config_init = config_commands.add_parser(
         "init",
         help="Create the user-global config from the packaged template.",
@@ -402,11 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
     list_sheets.add_argument(
         "--workbook", required=True, help="Workbook path, absolute or relative to the source root."
     )
+    add_output_options(parser)
     return parser
-
-
-def _emit(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 def _exit_code(summary: dict[str, Any]) -> int:
@@ -682,16 +680,11 @@ def _log_status_results(
     logger.info("Status results:\n%s", "\n".join(lines))
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.command == "pull" and args.workbook and args.all_sources:
-        parser.error("A workbook path requires --source and cannot be combined with --all-sources")
-    logger = configure_logging(
-        quiet=args.quiet,
-        verbose=args.verbose,
-        no_color=args.no_color,
-    )
+def _execute(
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    emit: Callable[[dict[str, Any]], None],
+) -> int:
     try:
         if args.command == "config" and args.config_command == "init":
             if args.config is not None:
@@ -701,7 +694,7 @@ def main(argv: list[str] | None = None) -> int:
                 logger.info("Config already matches the packaged template: %s", path)
             else:
                 logger.log(SUCCESS, "Config %s: %s", status, path)
-            _emit({"status": status, "command": "config init", "configPath": str(path)})
+            emit({"status": status, "command": "config init", "configPath": str(path)})
             return 0
         config = load_config(explicit=args.config)
         if args.command == "config":
@@ -712,10 +705,7 @@ def main(argv: list[str] | None = None) -> int:
                 **config.config_details,
             }
             logger.info("Showing resolved configuration")
-            if args.json:
-                _emit(result)
-            else:
-                print("\n".join(config_lines(result)))
+            emit(result)
             return 0
         if args.command == "export":
             _check_generation_options(args)
@@ -734,7 +724,7 @@ def main(argv: list[str] | None = None) -> int:
                 logger=logger,
                 **_generation_arguments(args),
             )
-            _emit(result)
+            emit(result)
             return _exit_code(result)
         if args.command == "pull":
             cover_values = asdict(config.cover)
@@ -794,7 +784,7 @@ def main(argv: list[str] | None = None) -> int:
                 force=False,
                 logger=logger,
             )
-            _emit(result)
+            emit(result)
             return 0
         report_root = args.report_dir.expanduser().resolve() if args.report_dir else None
         logger.info(
@@ -905,7 +895,15 @@ def main(argv: list[str] | None = None) -> int:
             _log_readable_summary(logger, summary)
         if args.command == "delete-notes" and backup_dir is not None:
             logger.info("Deletion backup: %s", backup_dir)
-        _emit(summary)
+        by_id = {source.id: source for source in sources}
+        rows = []
+        for action in actions:
+            row = action.as_dict()
+            row_source = by_id.get(action.source_root_id)
+            if action.source_path and row_source:
+                row["workbookPath"] = str((row_source.path / action.source_path).absolute())
+            rows.append(row)
+        emit({**summary, "results": rows})
         return _exit_code(summary)
     except (ConfigError, StateError, ContextError) as exc:
         logger.error("%s", exc)
@@ -919,7 +917,7 @@ def main(argv: list[str] | None = None) -> int:
             "adopt",
             "status",
         }:
-            _emit({"status": "config-error", "command": args.command, "message": str(exc)})
+            emit({"status": "config-error", "command": args.command, "message": str(exc), **error_targets(args, exc)})
         return 3
     except Exception as exc:  # pragma: no cover - last-resort CLI boundary
         if args.verbose:
@@ -936,5 +934,41 @@ def main(argv: list[str] | None = None) -> int:
             "adopt",
             "status",
         }:
-            _emit({"status": "error", "command": args.command, "message": str(exc)})
+            emit({"status": "error", "command": args.command, "message": str(exc), **error_targets(args, exc)})
         return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    tokens = argv[:argv.index("--")] if "--" in argv else argv
+    json_output = "--json" in tokens
+    full_output = "--full-output" in tokens
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+    args = argparse.Namespace()
+    logger = logging.getLogger("excel_catalog_pipeline")
+
+    def emit(result: dict[str, Any]) -> None:
+        emit_result(visible_result(result, full_output=full_output), json_output=json_output)
+
+    try:
+        parser = build_parser()
+        args = parser.parse_args(argv, namespace=args)
+        if args.quiet and args.verbose:
+            parser.error("--quiet and --verbose cannot be combined")
+        if args.command == "pull" and args.workbook and args.all_sources:
+            parser.error("A workbook path requires --source and cannot be combined with --all-sources")
+        logger = configure_logging(quiet=args.quiet, verbose=args.verbose, no_color=args.no_color)
+        return _execute(args, logger, emit)
+    except SystemExit as exc:
+        if exc.code:
+            emit({"status": "argument-error", "command": getattr(args, "command", None),
+                  "message": getattr(exc, "message", "Invalid arguments; see stderr and --help."),
+                  **error_targets(args)})
+        raise
+    except KeyboardInterrupt:
+        logger.error("Interrupted; completed outputs and recovery backups are retained.")
+        emit({"status": "interrupted", "command": getattr(args, "command", None),
+              "message": "Interrupted", **error_targets(args)})
+        return 130
