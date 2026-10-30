@@ -108,6 +108,7 @@ def test_ai_patch_uses_same_order_and_preserves_body():
         original,
         {
             "contextStatus": "current",
+            "contextProfiles": ["default-en", "default-ja"],
             "contextAnalyzedSheets": ["Data"],
             "contextGeneratedAt": "2026-10-06T23:01:02.987654Z",
             "updated": "2026-10-06T23:01:02.987654Z",
@@ -115,6 +116,8 @@ def test_ai_patch_uses_same_order_and_preserves_body():
     )
     after = values(result)
     assert tuple(after)[-4:] == TAIL
+    assert after["contextProfiles"] == ["default-en", "default-ja"]
+    assert "# --- Context generation ---\ncontextStatus: current\ncontextProfiles:" in result
     assert after["contextGeneratedAt"] == "2026-10-07T08:01:02+09:00"
     assert after["created"] == values(original)["created"]
     assert result[FENCE.match(result).end() :] == original[FENCE.match(original).end() :]

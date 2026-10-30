@@ -60,6 +60,7 @@ def test_plain_export_is_adjacent_and_independent(environment, capsys):
     note = read_note(output)
     assert note.frontmatter["type"] == "ExcelExport"
     assert note.frontmatter["sourceFileName"] == "book.xlsx"
+    assert "contextProfiles" not in note.frontmatter
     assert not {"sourceRoot", "sourceId", "noteId", "fileKind"}.intersection(note.frontmatter)
     assert "A1: Catalog entry" in note.body and "B1: 42" in note.body
     assert note.body.count("### Data") == 1
@@ -128,6 +129,7 @@ def test_context_export_has_overview_images_and_no_persistent_cache(environment,
     output = book.with_name(book.name + ".md")
     note = read_note(output)
     assert note.frontmatter["contextStatus"] == "current"
+    assert note.frontmatter["contextProfiles"] == ["default-ja"]
     assert (
         note.body.index("Workbook Map")
         < note.body.index("Workbook meaning.")

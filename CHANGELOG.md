@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `pull --context` / `export --context` の Frontmatter に `contextProfiles` を追加。ノート内のシート説明・ブック要約に使った文章の profile 名を、重複なしの一覧で記録。
+
 ## 5.0.0 - 2026-10-29
 
 - CLI全般の既定出力を1行ごとの `key=value` に変更（非互換変更）。`--json` で機械処理用JSON、`--full-output` で変更なし・skipを含む全対象を表示。両指定は多段サブコマンドの前後でも利用可能。

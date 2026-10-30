@@ -73,6 +73,7 @@ def test_source_create_update_push_preserves_identity_and_user_text(setup):
     first = read_note(output)
     assert first.frontmatter["type"] == "excel"
     assert first.frontmatter["contextStatus"] == "not-generated"
+    assert "contextProfiles" not in first.frontmatter
     assert book.read_bytes() == before and not calls
     output.write_text(
         output.read_text(encoding="utf-8").replace('title: "Example title"', 'title: "Edited title"')
@@ -98,6 +99,7 @@ def test_ai_creates_overview_and_frontmatter_reuses_cache_then_marks_stale(setup
     note = read_note(output)
     assert note.frontmatter["contextStatus"] == "current"
     assert note.frontmatter["contextAnalyzedSheets"] == ["Data"]
+    assert note.frontmatter["contextProfiles"] == ["default-ja"]
     assert "Workbook meaning." in note.body and "Sheet meaning." in note.body
     assert note.body.index("context-workbook") < note.body.index("context-1")
     assert [stage for stage, _ in calls] == ["sheet", "workbook"]
@@ -106,6 +108,7 @@ def test_ai_creates_overview_and_frontmatter_reuses_cache_then_marks_stale(setup
     change_cell(book)
     assert pull(book) == 0
     assert read_note(output).frontmatter["contextStatus"] == "stale"
+    assert read_note(output).frontmatter["contextProfiles"] == ["default-ja"]
     assert "Workbook meaning." in read_note(output).body and len(calls) == 2
     assert pull(book, None, "--context") == 0
     assert len(calls) == 4 and read_note(output).frontmatter["contextStatus"] == "current"
@@ -422,6 +425,41 @@ def test_individual_profile_names_survive_later_sheet_pulls(setup):
     assert "Profile: default-en" in context.existing_block(text, "1")
     assert "使用profile: default-ja" in context.existing_block(text, "2")
     assert [n["profile"] for n in calls[-1][1]["notes"]] == ["default-en", "default-ja"]
+    assert read_note(output).frontmatter["contextProfiles"] == ["default-en", "default-ja"]
+    assert pull(book) == 0
+    assert read_note(output).frontmatter["contextProfiles"] == ["default-en", "default-ja"]
+    assert pull(book, None, "--context", "--profile", "default-ja") == 0
+    assert read_note(output).frontmatter["contextProfiles"] == ["default-ja"]
+
+
+def test_cached_context_backfills_profiles_without_regenerating(setup):
+    _, book, output, calls = setup
+    assert pull(book, output, "--context") == 0
+    text = output.read_bytes()
+    newline = b"\r\n" if b"\r\n" in text else b"\n"
+    field = b"contextProfiles:" + newline + b"- default-ja" + newline
+    assert field in text
+    output.write_bytes(text.replace(field, b""))
+    assert pull(book, None, "--context") == 0
+    assert read_note(output).frontmatter["contextProfiles"] == ["default-ja"]
+    assert len(calls) == 2
+
+
+def test_failed_overview_records_new_sheet_and_retained_overview_profiles(setup, monkeypatch):
+    _, book, output, _ = setup
+    assert pull(book, output, "--context", "--profile", "default-en") == 0
+    original_generate = context.generate_markdown
+
+    def fail(*args, **kwargs):
+        if kwargs.get("stage") == "workbook":
+            raise RuntimeError("overview failed")
+        return original_generate(*args, **kwargs)
+
+    monkeypatch.setattr(context, "generate_markdown", fail)
+    assert pull(book, None, "--context", "--profile", "default-ja") == 1
+    note = read_note(output)
+    assert note.frontmatter["contextStatus"] == "stale"
+    assert note.frontmatter["contextProfiles"] == ["default-en", "default-ja"]
 
 
 def test_invalid_profile_fails_before_note_or_state_writes(setup):

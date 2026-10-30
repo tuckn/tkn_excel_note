@@ -25,6 +25,7 @@ GROUPS = (
         "Context generation",
         (
             "contextStatus",
+            "contextProfiles",
             "contextAnalyzedSheets",
             "contextOmittedSheets",
             "contextStaleSheets",
@@ -39,6 +40,7 @@ LISTS = (
     "keywords",
     "categories",
     "tags",
+    "contextProfiles",
     "contextAnalyzedSheets",
     "contextOmittedSheets",
     "contextStaleSheets",

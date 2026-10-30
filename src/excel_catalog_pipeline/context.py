@@ -125,6 +125,21 @@ def _read_state(path: Path) -> dict[str, Any]:
     return value
 
 
+def _context_profiles(text: str, state_dir: Path, pending: dict[str, str]) -> list[str]:
+    """List known profiles for retained context, including the block being published."""
+    profiles = set()
+    for block_id in re.findall(r"<!-- excel-catalog:begin context-([\w-]+) -->", text):
+        profile: object
+        if block_id in pending:
+            profile = pending[block_id]
+        else:
+            filename = "workbook.json" if block_id == "workbook" else f"sheet-{block_id}.json"
+            profile = _read_state(state_dir / filename).get("promptProfile")
+        if isinstance(profile, str) and profile:
+            profiles.add(profile)
+    return sorted(profiles)
+
+
 def _assets_intact(note: Path, state: dict[str, Any]) -> bool:
     assets = state.get("assets")
     if not isinstance(assets, dict):
@@ -431,7 +446,14 @@ def build_context(
                 )
                 if include_overview:
                     new_text = patch_frontmatter(
-                        new_text, {"contextStatus": "stale", "updated": utc_now()}
+                        new_text,
+                        {
+                            "contextStatus": "stale",
+                            "contextProfiles": _context_profiles(
+                                new_text, state_dir, {sheet["id"]: writing.name}
+                            ),
+                            "updated": utc_now(),
+                        },
                     )
                 if read_shared(workbook) != data:
                     raise ContextError("Workbook changed during generation; run the command again")
@@ -717,6 +739,7 @@ def _build_overview(
             else "partial"
             if omitted
             else "current",
+            "contextProfiles": _context_profiles(text, state_dir, {"workbook": writing.name}),
             "contextSourceFingerprint": fingerprint,
             "contextAnalyzedSheets": names,
             "contextOmittedSheets": omitted,

@@ -41,6 +41,7 @@
 
 | 項目 | 内容 |
 | --- | --- |
+| `contextProfiles` | ノート内のシート説明・ブック要約の生成に使った文章の profile 名の一覧（例: `[default-ja]`）。重複を除き、名前順に記録 |
 | `contextAnalyzedSheets` | 説明があるシートの一覧 |
 | `contextOmittedSheets` | 説明をまだ生成していないシートの一覧 |
 | `contextStaleSheets` | 説明の生成後に内容が変わったシートの一覧 |
@@ -51,9 +52,14 @@
 いずれも、直近の実行で選んだシートだけでなく、それまでに生成した説明全体を表します。
 これらの項目は Excel へ書き戻しません。
 
+`contextProfiles` は `context_profiles/` 内のディレクトリ名（`default-ja`、`default-en`、独自 profile 名など）を記録します。
+シートごとに異なる profile を使った場合は、保持している説明とブック要約に使った名前をすべて含めます。
+通常の `pull` では値を保持し、次回の `pull --context` ではキャッシュを利用する場合も生成記録から更新します。
+生成記録が欠けている説明の profile は推測しません。AI による説明を生成していない新規ノートには追加しません。
+
 先頭は `type → schemaVersion → title → description → cover`、末尾は `tags → created → updated → noteId` に固定します。
 中央は、文書情報（`subject`、`author`、`keywords`、`categories`、`comments`）、元ファイルの識別・所在（`sourceId`、`sourceRoot`、`sourceFileName`、`sourceFullPath`）、元ファイルの日時、AI生成情報の順です。
-AI生成情報は `contextStatus → contextAnalyzedSheets → contextOmittedSheets → contextStaleSheets → contextUnverifiedSheets → contextSourceFingerprint → contextGeneratedAt` の順で、存在する項目だけを出力します。
+AI生成情報は `contextStatus → contextProfiles → contextAnalyzedSheets → contextOmittedSheets → contextStaleSheets → contextUnverifiedSheets → contextSourceFingerprint → contextGeneratedAt` の順で、存在する項目だけを出力します。
 階層構造を追加せず、空行とコメントで区切ります。終端の `---` と本文の間には空行を入れます。
 通常の取り込み・書き戻しによるノート更新・AI生成後の更新で、同じ並びと日時形式を使います。
 
