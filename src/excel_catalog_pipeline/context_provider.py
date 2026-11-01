@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from tkn_genai_bridge import (
     GenAIError,
     GenerationRecord,
@@ -19,9 +20,9 @@ from tkn_genai_bridge import (
     Profile,
     Runtime,
     Usage,
-    load_profile,
 )
 
+from .config import _deep_merge
 from .context_profiles import load_context_profile, render_context
 from .context_source import ContextError
 from .generation import reference_prompt, reference_provenance
@@ -88,10 +89,14 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def resolve_profile(config: ContextConfig) -> Profile:
+    if config.genai_profile not in config.genai_profiles:
+        raise ContextError(f"GenAI profile is not defined in genai_profiles: {config.genai_profile}")
     try:
-        profile = load_profile(config.bridge_profile, overrides=config.overrides)
-    except GenAIError as exc:
-        raise ContextError(f"Bridge configuration failed ({exc.code}): {exc}") from exc
+        profile = Profile.model_validate(_deep_merge(
+            config.genai_profiles[config.genai_profile].model_dump(), config.overrides
+        ))
+    except ValidationError:
+        raise ContextError("Invalid GenAI profile overrides") from None
     # All providers in the pinned Bridge version support image input.
     # Runtime.plan validates the actual images before generation.
     return profile
@@ -107,7 +112,7 @@ def generation_plan(
     """Plan settings only; images do not exist yet, so omit token/cost estimates."""
     writing = load_context_profile(config or ContextConfig(), stage=stage)
     try:
-        with Runtime(profile) as runtime:
+        with Runtime(profile, profile_name=config.genai_profile if config else None) as runtime:
             plan = runtime.plan(
                 GenerationRequest(
                     prompt=reference_prompt(writing.prompt, config or ContextConfig()),
@@ -205,7 +210,7 @@ def generate_markdown(
             schema_name=writing.schema_name,
             images=[ImageInput.from_file(path) for path in images],
         )
-        with Runtime(connection) as runtime:
+        with Runtime(connection, profile_name=config.genai_profile) as runtime:
             plan = runtime.plan(request, check_executable=True)
     except GenAIError as exc:
         raise ContextError(f"Bridge input validation failed ({exc.code}): {exc}") from exc
@@ -244,7 +249,7 @@ def generate_markdown(
         connection.model or "provider default",
     )
     try:
-        with Runtime(connection) as runtime:
+        with Runtime(connection, profile_name=config.genai_profile) as runtime:
             result = runtime.generate(request)
         record.update(_record_fields(result.record))
         markdown = render_context(writing, result.data)

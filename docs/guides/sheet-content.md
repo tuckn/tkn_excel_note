@@ -21,13 +21,12 @@
 - Windows とデスクトップ版 Microsoft Excel（シートの画像化に使います）。
 - 画像入力に対応する生成 AI の接続先とモデル。
 
-AI の接続先・モデル・認証は、[GenAI Bridge](https://github.com/tuckn/tkn_genai_bridge) の共有設定 `~/.tkn/genai_bridge/config.yaml` で管理します。
-共有設定には、接続先ごとの設定を Bridge の profile として名前を付けて定義します。
-Codex、Claude Code、GitHub Copilot、Antigravity、Ollama、Azure OpenAI の接続先を定義できます。
-GitHub Copilot を使う場合は、画像を添付できる（`--attachment` に対応する）CLI が必要です。
-共有設定の作成方法は、[GenAI Bridge のセットアップ](https://github.com/tuckn/tkn_genai_bridge#セットアップ)を参照してください。
+AI の接続先・モデル・認証は、この CLI の `config.yaml` の `genai_profiles` で管理します。
+GenAI Bridge の共有設定は読み込みません。接続設定と Bridge の版をアプリ単位で管理できます。
+Codex、Claude Code、GitHub Copilot、Antigravity、Ollama、Azure OpenAI を使えます。
+GitHub Copilot は CLI 1.0.105 以降が必要です。
 
-このツールの設定ファイルでは、使う Bridge の profile を generator として指定します。
+使う接続 profile を generator の `genai_profile` で指定します。
 `config init` で作成した設定ファイルには、ログイン済みの Codex CLI を使う `codex-default` を指定した generator `my-codex-def` があらかじめ定義されています。
 次の例は、この generator にタイムアウトの上書きを追加したものです。
 
@@ -36,19 +35,19 @@ generation:
   default_generator: my-codex-def
   generators:
     my-codex-def:
-      bridge_profile: codex-default
+      genai_profile: codex-default
       prompt_profile: default-ja
       overrides:
         timeout_seconds: 600
 ```
 
-`overrides` には、共有設定の値をこのツールだけで上書きする値を書きます。
+`overrides` には、選択した `genai_profiles` の値を、その generator だけで上書きする値を書きます。
 設定できる値は GenAI Bridge の仕様に従います。
-ローカルの Ollama で画像を処理する場合は、Bridge の profile `local-vision` を選べます。
+ローカルの Ollama で画像を処理する場合は、`genai_profiles` に `provider: ollama` とモデルを指定した接続先を定義します。
 Ollama と画像対応モデルは別途準備してください。
 
 generator の選び方と、設定ファイルの全項目は「[設定リファレンス](../reference/configuration.md#ai-生成の設定)」を参照してください。
-`--context` を付けない `pull`、`push`、`workbook list-sheets` は、AI の設定を読み込まず、AI も呼び出しません。
+`--context` を付けない `pull`、`push`、`workbook list-sheets` は、接続や生成を実行しません。専用設定内の `genai_profiles` の形式検証は行います。
 
 ## 送信する情報と呼び出し回数
 
@@ -255,7 +254,7 @@ img/
 | `~/.tkn/excel_note/state/export/usage/` | `export` の AI の使用量 |
 
 使用量の記録には、トークン数、所要時間、GenAI Bridge の実行記録、画像のハッシュ値、Bridge の profile 名、送った根拠データの文字数が入ります。
-共有設定に参考単価がある場合は、GenAI Bridge が計算した参考金額も記録されます。
+選択した `genai_profiles` の接続設定に参考単価がある場合は、GenAI Bridge が計算した参考金額も記録されます。
 プロンプトの本文、生成した文章、画像、認証情報は保存しません。
 
 トークン数は GenAI Bridge が集計します。

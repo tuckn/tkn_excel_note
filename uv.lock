@@ -2375,7 +2375,7 @@ wheels = [
 
 [[package]]
 name = "tkn-excel-note"
-version = "5.0.0"
+version = "5.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
@@ -2404,7 +2404,7 @@ requires-dist = [
     { name = "pypdfium2", marker = "sys_platform == 'win32'", specifier = ">=4.30" },
     { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=308" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "tkn-genai-bridge", url = "https://github.com/tuckn/tkn_genai_bridge/archive/9cf534e47159901c3bb05bb802695fad746cc338.zip" },
+    { name = "tkn-genai-bridge", url = "https://github.com/tuckn/tkn_genai_bridge/archive/848769a4842ceacd20875ba0934cdd0fc478dc2e.zip" },
 ]
 
 [package.metadata.requires-dev]
@@ -2418,8 +2418,8 @@ dev = [
 
 [[package]]
 name = "tkn-genai-bridge"
-version = "0.10.0"
-source = { url = "https://github.com/tuckn/tkn_genai_bridge/archive/9cf534e47159901c3bb05bb802695fad746cc338.zip" }
+version = "0.11.0"
+source = { url = "https://github.com/tuckn/tkn_genai_bridge/archive/848769a4842ceacd20875ba0934cdd0fc478dc2e.zip" }
 dependencies = [
     { name = "azure-identity" },
     { name = "httpx" },
@@ -2430,7 +2430,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "referencing" },
 ]
-sdist = { hash = "sha256:a32e933e4363030f5c135dc56b91ce23e48d1cb04099e0bb1060acdeda0af58e" }
+sdist = { hash = "sha256:fda5f08fa1b7fc940de0a71819327d46386feca2a60a430883ce79f034cf4080" }
 
 [package.metadata]
 requires-dist = [

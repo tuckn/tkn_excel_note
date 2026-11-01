@@ -95,7 +95,7 @@ contextStatus: current
 | 種類 | 設定する場所 | 選ぶもの | その実行だけ変える方法 |
 | --- | --- | --- | --- |
 | 文章の profile | `generation.prompt_profile`、または generator の `prompt_profile` | context の構成と言語（既定 `default-ja`、英語は `default-en`） | `--profile <名前>` |
-| Bridge の profile | `generation.bridge_profile`、または generator の `bridge_profile` | AI の接続先・モデル・認証（GenAI Bridge の共有設定に定義） | `--generator <id>` で別の generator を選ぶ |
+| AI 接続 profile | `generation.genai_profile`、または generator の `genai_profile` | AI の接続先・モデル・認証（この CLI の `genai_profiles` に定義） | `--generator <id>` で別の generator を選ぶ |
 | ノートの profile | `sources.<id>.notes.profile` | 代理ノートのテンプレート（既定 `tkn-obsidian-v1`） | なし |
 
 ### 1.4. 全体像
@@ -148,6 +148,7 @@ Windows 以外での動作は未検証です。
 ```shell
 cd "C:\path\to\tkn_excel_note"
 uv tool install .
+# 更新時は uv tool install . --reinstall
 tkn-excel-note --version
 ```
 
@@ -158,9 +159,12 @@ tkn-excel-note --version
 
 AI を使わない場合、この手順は不要です。
 
-`--context` は、GenAI Bridge の共有設定 `~/.tkn/genai_bridge/config.yaml` に定義した接続先を使います。
+`--context` は、この CLI の `config.yaml` の `genai_profiles` に定義した接続先を使います。
+GenAI Bridge の共有設定は読み込みません。
 既定の接続先 `codex-default` は、ログイン済みの Codex CLI を使います。
-ほかの接続先と共有設定の作成方法は、[GenAI Bridge のセットアップ](https://github.com/tuckn/tkn_genai_bridge#セットアップ)を参照してください。
+`tkn-excel-note config init` で専用設定を作成し、`genai_profiles` のモデルや実行ファイルを設定します。
+既存設定の移行方法は、[設定リファレンス](docs/reference/configuration.md#ai-生成の設定)を参照してください。
+GitHub Copilot を使う場合は Copilot CLI 1.0.105 以降が必要です。
 接続先には、画像入力に対応するモデルを指定します。
 
 接続先の切り替え方法と、このツール側の設定は「[AI によるシート説明とブック要約](docs/guides/sheet-content.md#準備)」で説明しています。

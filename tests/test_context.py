@@ -542,7 +542,7 @@ def test_dry_run_validates_bridge_without_executable_or_generation(build_setup, 
     assert not calls and not state.exists()
 
 
-def test_bridge_profile_failure_prevents_rendering(build_setup, monkeypatch):
+def test_genai_profile_failure_prevents_rendering(build_setup, monkeypatch):
     _, _, note, _, calls, run = build_setup
     before = note.read_bytes()
 

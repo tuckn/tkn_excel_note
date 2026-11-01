@@ -39,7 +39,7 @@ tkn-excel-note config list --json
 | `loaded_sources` | 各ファイルの絶対パス、読み込んだ `schema_version`、`effective_schema_version`、読み取り時の正規化の有無（`migrated`）。版が省略された入力は `null` で表示します。 |
 | `winning_sources` | 各設定値の決定元。ファイルの絶対パスまたは `built-in`。配列の各要素も表示します。 |
 | `effective_schema_version` | 内部で使用する設定スキーマ版。ファイルによる上書き対象ではありません。 |
-| `selected_generator` / `selected_prompt_profile` / `selected_bridge_profile` | 既定の生成設定と、その設定が選ぶ profile。source 固有の選択は `config.sources` で確認します。 |
+| `selected_generator` / `selected_prompt_profile` / `selected_genai_profile` | 既定の生成設定と、その設定が選ぶ profile。source 固有の選択は `config.sources` で確認します。 |
 
 ## コマンドが使う設定
 
@@ -156,12 +156,46 @@ AI の設定は不要です。
 ## AI 生成の設定
 
 トップレベルの `generation` は、`export --context` と `pull --context` で使います。
-AI の接続先・モデル・認証は、このファイルではなく GenAI Bridge の共有設定 `~/.tkn/genai_bridge/config.yaml` で管理します。
+AI の接続先・モデル・認証は、同じファイルの `genai_profiles` で管理します。
+Bridge の共有設定 `~/.tkn/genai_bridge/config.yaml` は読み込みません。
+アプリ自身の設定の優先順位（組み込み → ユーザー専用 → CWD → 明示ファイル）は維持します。
+CWD の `.tkn/config.yaml` もこのアプリの設定として読み、Bridge の設定ファイルとしては読みません。
+
+```yaml
+genai_profiles:
+  codex-default:
+    provider: codex
+    model: null
+  claude-default:
+    provider: claude-code
+    model: null
+  copilot-default:
+    provider: github-copilot
+    model: null
+  local-vision:
+    provider: ollama
+    model: example-vision-model
+    local_only: true
+```
+
+組み込み接続先は `codex-default`、`claude-default`、`copilot-default`、`antigravity-default` です。
+各接続先の項目は固定依存版 Bridge の `Profile` に従い、未知の項目や不正な値を拒否します。
+接続先は名前・項目単位でマージされ、`config list` の `winning_sources` で設定元を確認できます。
+`cli.executable` の相対パスは、その値を書いた設定ファイルのフォルダが基準です。`codex` のようなコマンド名は PATH から探します。
+秘密値は直接書かず、認証済み CLI や `azure.api_key_env` などの環境変数名を指定します。
+未定義の接続先は生成の準備時にエラーとなり、共有設定へフォールバックしません。
+Copilot CLI は 1.0.105 以降が対象で、廃止された `--no-remote` を渡さず `--sync-session=off` を使用します。
+
+**既存設定の移行**：共有設定から使用中の profile をこのファイルの `genai_profiles` へコピーし、
+generator の `bridge_profile` を `genai_profile` に変更します。共有設定の変更・削除は不要です。
+旧 `bridge_profile` は読み込み時に互換名として扱いますが、参照先は専用の `genai_profiles` です。
+同一設定箇所への新旧名の併記はエラーです。共有設定のカスタマイズは自動では取り込まれないため、
+同名の組み込み接続先を使っていた場合も、モデル・認証・タイムアウトなどの値を移してください。
 使い方は「[AI によるシート説明とブック要約](../guides/sheet-content.md)」を参照してください。
 
 ### 名前付き generator と補足文
 
-generator は、AI の接続先（Bridge の profile）、文章の profile、Bridge の設定の上書き、補足文を組にして名前を付けた設定です。
+generator は、AI の接続先（`genai_profiles`）、文章の profile、Bridge の設定の上書き、補足文を組にして名前を付けた設定です。
 複数の generator を定義し、`--generator <id>` や source ごとの設定で切り替えます。
 
 ```yaml
@@ -169,7 +203,7 @@ generation:
   default_generator: my-codex-def
   generators:
     my-codex-def:
-      bridge_profile: codex-default
+      genai_profile: codex-default
       prompt_profile: default-ja
       overrides:
         timeout_seconds: 600
@@ -179,7 +213,7 @@ generation:
         files:
           - ./references/technical-terms.md
     my-codex-en:
-      bridge_profile: codex-default
+      genai_profile: codex-default
       prompt_profile: default-en
   max_reference_chars: 20000
 sources:
@@ -197,9 +231,9 @@ sources:
 
 | 設定キー（`generation.generators.<id>.` 以下） | 省略時の値 | 意味 |
 | --- | --- | --- |
-| `bridge_profile` | `codex-default` | GenAI Bridge の共有設定にある接続先の名前です。 |
+| `genai_profile` | `codex-default` | このファイルの `genai_profiles` にある接続先の名前です。 |
 | `prompt_profile` | `default-ja` | 文章の profile です。 |
-| `overrides` | `{}` | 共有設定の値を、このツールだけで上書きする値です。GenAI Bridge の設定仕様に従います。 |
+| `overrides` | `{}` | 接続 profile の値を、この generator だけで上書きする値です。GenAI Bridge の設定仕様に従います。 |
 | `reference.text` | なし | 補足文です。 |
 | `reference.files` | なし | 補足文のファイル（UTF-8）の一覧です。相対パスは、この設定ファイルのフォルダが基準です。 |
 
@@ -207,7 +241,7 @@ sources:
 
 | 対象 | 決まり方 |
 | --- | --- |
-| generator | `--generator` → `sources.<id>.generation.generator` → `generation.default_generator` の順で、最初に指定されたものを使います。どれもなければ、`generation` 直下の `bridge_profile`・`prompt_profile`・`overrides` を使います。 |
+| generator | `--generator` → `sources.<id>.generation.generator` → `generation.default_generator` の順で、最初に指定されたものを使います。どれもなければ、`generation` 直下の `genai_profile`・`prompt_profile`・`overrides` を使います。 |
 | 文章の profile | `--profile` を最優先します。指定がなければ、generator を選んだ場合はその `prompt_profile`（省略時 `default-ja`）、選ばない場合は `generation.prompt_profile`（既定 `default-ja`）を使います。 |
 | 補足文 | 選んだ generator の補足 → source の補足 → `--reference` → `--reference-file` の順に、すべてを合わせて使います。選ばなかった generator の補足は使いません。 |
 | 補足の無効化 | `--no-reference` を指定すると、設定ファイルの補足も含めてすべて使いません。`--reference` や `--reference-file` とは併用できません。 |
@@ -267,7 +301,7 @@ profile のファイル構成と作り方は「[独自の文章 profile を作�
 
 ## 設定ファイルの版
 
-`schema_version` は設定ファイルの形式の版で、現在は `"2.1.0"` です。
+`schema_version` は設定ファイルの形式の版で、現在は `"2.2.0"` です。
 
 ## プレビュー画像の設定
 

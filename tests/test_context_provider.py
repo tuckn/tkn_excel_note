@@ -35,7 +35,7 @@ GOOD = json.dumps(
 @pytest.fixture
 def setup_provider(tmp_path, monkeypatch):
     profile = Profile(model="fixture-model", cli=CliSettings(executable=sys.executable))
-    monkeypatch.setattr(provider, "load_profile", lambda *args, **kwargs: profile)
+    monkeypatch.setattr(provider, "resolve_profile", lambda *args, **kwargs: profile)
     image = tmp_path / "001.png"
     image.write_bytes(PNG)
     return image, tmp_path / "usage.json"
@@ -77,7 +77,7 @@ def test_real_bridge_receives_ordered_images_schema_and_journals_usage(setup_pro
     record = json.loads(journal.read_text())
     assert record["inputTokens"] == 200 and record["cachedInputTokens"] == 150
     assert record["usageComplete"] is True
-    assert record["generationRecord"]["bridge_version"] == "0.10.0"
+    assert record["generationRecord"]["bridge_version"] == "0.11.0"
     assert len(record["generationRecord"]["images"]) == 2
     assert "Good" not in journal.read_text()
     assert "SOURCE CONTENT" not in journal.read_text()
@@ -238,9 +238,9 @@ def test_all_bridge_image_providers_resolve_and_plan_without_generation(monkeypa
     if name == "azure-openai":
         settings["azure"] = AzureSettings(endpoint="https://example.openai.azure.com/openai/v1")
     profile = Profile(**settings)
-    monkeypatch.setattr(provider, "load_profile", lambda *a, **k: profile)
+
     monkeypatch.setattr(Runtime, "generate", lambda *a, **k: pytest.fail("AI must not run"))
-    resolved = provider.resolve_profile(ContextConfig())
+    resolved = provider.resolve_profile(ContextConfig(genai_profiles={"codex-default": profile}))
     assert provider.generation_plan(resolved)["will_call_provider"] is False
     with Runtime(resolved) as runtime:
         plan = runtime.plan(
@@ -256,20 +256,18 @@ def test_all_bridge_image_providers_resolve_and_plan_without_generation(monkeypa
     assert plan.will_call_provider is False
 
 
-def test_shared_profile_and_overrides_are_passed_to_bridge(monkeypatch):
-    calls = []
-
-    def load(name, *, overrides):
-        calls.append((name, overrides))
-        return Profile(provider="ollama", model="fixture-vision", local_only=True)
-
-    monkeypatch.setattr(provider, "load_profile", load)
-    profile = provider.resolve_profile(
-        ContextConfig(bridge_profile="local-vision", overrides={"timeout_seconds": 45})
+def test_inline_profile_and_overrides_are_passed_to_bridge():
+    config = ContextConfig(
+        genai_profile="local-vision",
+        genai_profiles={"local-vision": Profile(provider="ollama", model="fixture-vision", local_only=True)},
+        overrides={"timeout_seconds": 45},
     )
-    assert calls == [("local-vision", {"timeout_seconds": 45})]
-    plan = provider.generation_plan(profile)
+    profile = provider.resolve_profile(config)
+    assert profile.timeout_seconds == 45
+    assert config.genai_profiles["local-vision"].timeout_seconds == 300
+    plan = provider.generation_plan(profile, config=config)
     assert plan["provider"] == "ollama" and plan["local_only"] is True
+    assert plan["profile_name"] == "local-vision"
     assert "token_estimate" not in plan and "cost_estimate" not in plan
     assert plan["will_call_provider"] is False
 
@@ -278,6 +276,43 @@ def test_unknown_usage_does_not_become_zero():
     values = provider.usage_fields(Usage())
     assert values["inputTokens"] is None and values["knownInputTokens"] is None
     assert values["usageComplete"] is False
+
+
+@pytest.mark.parametrize("stage", ["sheet", "workbook"])
+def test_pinned_copilot_uses_supported_flags_and_preserves_profile(tmp_path, monkeypatch, stage):
+    config = ContextConfig(
+        genai_profile="dedicated-copilot",
+        genai_profiles={"dedicated-copilot": Profile(
+            provider="github-copilot", cli=CliSettings(executable=sys.executable)
+        )},
+    )
+    calls = []
+
+    def run(command, prompt, cwd, timeout, **kwargs):
+        calls.append(command)
+        assert "--no-remote" not in command and "--no-remote-export" not in command
+        assert "--sync-session=off" in command
+        assert all(f"--deny-tool={tool}" in command for tool in ("shell", "write", "read", "url", "memory"))
+        if stage == "sheet":
+            assert "--attachment" in command and "--output-format" in command
+            return "\n".join(json.dumps(event) for event in [
+                {"type": "assistant.message", "data": {"content": GOOD}},
+                {"type": "result", "exitCode": 0},
+            ])
+        assert "--attachment" not in command
+        return json.dumps({"summary": "Good", "uncertainties": []})
+
+    monkeypatch.setattr(cli, "run_process", run)
+    image = tmp_path / "input.png"
+    image.write_bytes(PNG)
+    journal = tmp_path / "usage.json"
+    result = provider.generate_markdown(
+        config, {"sheet": "Data"}, [image] if stage == "sheet" else [], journal, LOGGER, stage=stage
+    )
+    assert "Good" in result and len(calls) == 1
+    record = json.loads(journal.read_text())
+    assert record["bridgeProfile"] == "dedicated-copilot"
+    assert record["bridgeVersion"] == "0.11.0" and record["status"] == "success"
 
 
 def test_workbook_profile_uses_text_only_bridge_input(setup_provider, monkeypatch):

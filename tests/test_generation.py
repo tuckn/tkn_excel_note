@@ -48,11 +48,11 @@ def named_config(tmp_path):
                 "default_generator": "general",
                 "generators": {
                     "general": {
-                        "bridge_profile": "codex-default",
+                        "genai_profile": "codex-default",
                         "reference": {"text": "General background"},
                     },
                     "specific": {
-                        "bridge_profile": "local-vision",
+                        "genai_profile": "local-vision",
                         "prompt_profile": "default-en",
                         "overrides": {"timeout_seconds": 600},
                         "reference": {"text": "Specific background"},
@@ -76,10 +76,10 @@ def named_config(tmp_path):
 def test_named_selection_composition_profile_override_and_roundtrip(tmp_path):
     config = named_config(tmp_path)
     source = config.sources[0]
-    assert resolve_generation(config).bridge_profile == "codex-default"
+    assert resolve_generation(config).genai_profile == "codex-default"
     resolved = resolve_generation(config, source, reference_texts=("One-time background",))
     assert resolved.generator_id == "specific"
-    assert resolved.bridge_profile == "local-vision"
+    assert resolved.genai_profile == "local-vision"
     assert resolved.prompt_profile == "default-en"
     assert resolved.overrides == {"timeout_seconds": 600}
     assert [item.text for item in resolved.reference_inputs] == [
@@ -107,14 +107,14 @@ def test_legacy_singleton_settings_still_work(tmp_path):
         {
             **DEFAULT_CONFIG,
             "generation": {
-                "bridge_profile": "local-vision",
+                "genai_profile": "local-vision",
                 "prompt_profile": "default-en",
                 "overrides": {"timeout_seconds": 500},
             },
         }
     )
     resolved = resolve_generation(config)
-    assert resolved.bridge_profile == "local-vision" and resolved.prompt_profile == "default-en"
+    assert resolved.genai_profile == "local-vision" and resolved.prompt_profile == "default-en"
     assert resolved.overrides == {"timeout_seconds": 500} and resolved.generator_id is None
 
 
@@ -125,7 +125,7 @@ def test_legacy_singleton_settings_still_work(tmp_path):
         {"generators": {"": {}}},
         {"generators": {"good": []}},
         {"generators": {"good": {"typo": 1}}},
-        {"generators": {"good": {"bridge_profile": " "}}},
+        {"generators": {"good": {"genai_profile": " "}}},
         {"generators": {"good": {"prompt_profile": "auto"}}},
         {"generators": {"good": {"overrides": {"timeout_seconds": -1}}}},
         {"generators": {"good": {"reference": "text"}}},
@@ -251,7 +251,7 @@ def test_no_reference_skips_configured_files_but_keeps_generator(tmp_path):
     )
     config = replace(config, generators={**config.generators, "specific": spec})
     resolved = resolve_generation(config, config.sources[0], no_reference=True)
-    assert resolved.bridge_profile == "local-vision" and resolved.reference_inputs == ()
+    assert resolved.genai_profile == "local-vision" and resolved.reference_inputs == ()
     with pytest.raises(ConfigError, match="cannot be combined"):
         resolve_generation(config, no_reference=True, reference_texts=("temporary",))
     with pytest.raises(ConfigError, match="Unknown generator"):

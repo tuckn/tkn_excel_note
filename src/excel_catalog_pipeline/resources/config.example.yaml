@@ -1,4 +1,4 @@
-schema_version: "2.1.0"
+schema_version: "2.2.0"
 
 sources:
   personal-excel:
@@ -41,14 +41,29 @@ sync:
 
 # Optional `export --context` and `pull --source ID --context` use GenAI Bridge.
 # Plain export/pull remain local; export uses generation limits without source settings.
-# Connections/models/authentication: ~/.tkn/genai_bridge/config.yaml.
+# Connections/models/authentication are owned by this application in genai_profiles.
+# GenAI Bridge shared configuration is never loaded.
 # Evidence images live in the proxy note's sibling img/ directory.
+genai_profiles:
+  codex-default:
+    provider: codex
+    model: null
+  claude-default:
+    provider: claude-code
+    model: null
+  copilot-default:
+    provider: github-copilot  # Requires Copilot CLI 1.0.105 or later.
+    model: null
+  antigravity-default:
+    provider: antigravity
+    model: null
+
 generation:
   # Reusable generation settings. CLI --generator > source generation.generator > this default.
   default_generator: my-codex-def
   generators:
     my-codex-def:
-      bridge_profile: codex-default
+      genai_profile: codex-default
       # Templates define the language and structure; use default-en for English.
       prompt_profile: default-ja
       overrides: {}
@@ -57,7 +72,7 @@ generation:
         text: ""
         files: []  # UTF-8 files; relative paths are based on this config.yaml.
     my-codex-en:
-      bridge_profile: codex-default
+      genai_profile: codex-default
       prompt_profile: default-en
 
   # Optional source-specific settings under sources.<id>.generation:

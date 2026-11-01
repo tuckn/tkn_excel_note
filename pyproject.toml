@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tkn-excel-note"
-version = "5.0.0"
+version = "5.1.0"
 description = "Create and update Excel proxy Markdown notes with optional AI context."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ dependencies = [
   "PyYAML>=6.0.2",
   "jsonschema>=4.23,<5",
   "pydantic>=2.10,<3",
-  "tkn-genai-bridge @ https://github.com/tuckn/tkn_genai_bridge/archive/9cf534e47159901c3bb05bb802695fad746cc338.zip",
+  "tkn-genai-bridge @ https://github.com/tuckn/tkn_genai_bridge/archive/848769a4842ceacd20875ba0934cdd0fc478dc2e.zip",
   "pywin32>=308; sys_platform == 'win32'",
   "pypdfium2>=4.30; sys_platform == 'win32'",
   "Pillow>=11.0; sys_platform == 'win32'",

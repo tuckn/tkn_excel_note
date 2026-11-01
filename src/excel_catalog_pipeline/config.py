@@ -29,15 +29,17 @@ from .models import (
     SyncConfig,
     ThumbnailConfig,
     context_settings,
+    default_genai_profiles,
 )
 from .note_resources import NoteResourceError, load_note_template
 from .paths import global_config_path
 from .thumbnail_settings import validate_thumbnails
 
-SCHEMA_VERSION = "2.1.0"
+SCHEMA_VERSION = "2.2.0"
 DEFAULT_CONFIG: dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
     "sources": {},
+    "genai_profiles": {name: profile.model_dump() for name, profile in default_genai_profiles().items()},
     "generation": {
         **context_settings(ContextConfig()),
         "default_generator": None,
@@ -53,7 +55,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_extracted_text_chars": 12000,
     },
 }
-TOP_LEVEL_KEYS = {"schema_version", "sources", "sync", "generation", "cover", "thumbnails"}
+TOP_LEVEL_KEYS = {"schema_version", "sources", "sync", "generation", "cover", "thumbnails", "genai_profiles"}
 SYNC_KEYS = set(DEFAULT_CONFIG["sync"])
 SOURCE_KEYS = {"id", "workbooks_dir", "recursive", "include", "ignore", "notes", "generation"}
 NOTES_KEYS = {"dir", "profile", "frontmatter_term_format", "rename_adapter"}
@@ -215,6 +217,10 @@ def _source_generation(raw: Any, where: str) -> SourceGenerationConfig:
 def _generation_settings(raw: dict[str, Any], where: str = "generation") -> dict[str, Any]:
     """Validate generation settings and reject retired options in each layer."""
     values = deepcopy(raw)
+    if "bridge_profile" in values:
+        if "genai_profile" in values:
+            raise ConfigError(f"Do not mix {where}.bridge_profile and genai_profile")
+        values["genai_profile"] = values.pop("bridge_profile")
     if "language" in values or values.get("prompt_profile") == "auto":
         name = values.get("prompt_profile")
         language = values.get("language", "Japanese")
@@ -258,7 +264,7 @@ def _generation_settings(raw: dict[str, Any], where: str = "generation") -> dict
             # Retired options must fail even when a higher layer replaces them.
             spec = _generation_settings(spec, location)
             _reject_unknown(
-                spec, {"bridge_profile", "prompt_profile", "overrides", "reference"}, location
+                spec, {"genai_profile", "prompt_profile", "overrides", "reference"}, location
             )
             if "reference" in spec:
                 original_reference = spec["reference"]
@@ -319,6 +325,32 @@ def _normalize_layer(data: dict[str, Any], *, base_dir: Path | None = None) -> d
     if not legacy and (parts[0] != current[0] or parts > current):
         raise ConfigError(f"Unsupported schema_version: {version!r}; supported {SCHEMA_VERSION}")
     values["schema_version"] = SCHEMA_VERSION
+    if "genai_profiles" in values:
+        profiles = values["genai_profiles"]
+        if not isinstance(profiles, dict):
+            raise ConfigError("genai_profiles must be a mapping")
+        for name, spec in profiles.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ConfigError("genai_profiles names must be non-empty strings")
+            if not isinstance(spec, dict):
+                raise ConfigError(f"genai_profiles.{name} must be a mapping")
+            # Validate each supplied field before merging; partial layers are allowed.
+            for key, value in spec.items():
+                field = Profile.model_fields.get(key)
+                if field is None:
+                    raise ConfigError(f"Unknown genai_profiles.{name} key: {key}")
+                try:
+                    TypeAdapter(field.rebuild_annotation()).validate_python(value, strict=True)
+                except ValidationError:
+                    raise ConfigError(f"Invalid genai_profiles.{name}.{key}") from None
+                if key in {"model", "reasoning_effort"} and isinstance(value, str) and (
+                    not value.strip() or "\x00" in value
+                ):
+                    raise ConfigError(f"Invalid genai_profiles.{name}.{key}")
+            cli = spec.get("cli") or {}
+            executable = cli.get("executable")
+            if executable and ("/" in executable or "\\" in executable or executable.startswith("~")):
+                cli["executable"] = str(((base_dir or Path.cwd()) / Path(executable).expanduser()).resolve())
     # Translate prior path names per layer before validating and merging sources.
     sources = values.get("sources")
     if isinstance(sources, (dict, list)):
@@ -395,7 +427,10 @@ def load_config(*, explicit: Path | None = None, cwd: Path | None = None) -> App
             try:
                 raw = _read_yaml(path)
                 layer = _normalize_layer(raw, base_dir=path.parent)
-                validate_config(_deep_merge(DEFAULT_CONFIG, layer), check_generator_links=False)
+                checked_layer = {**layer, "genai_profiles": _deep_merge(
+                    merged["genai_profiles"], layer.get("genai_profiles", {})
+                )}
+                validate_config(_deep_merge(DEFAULT_CONFIG, checked_layer), check_generator_links=False)
             except ConfigError as exc:
                 exc.config_path = path.absolute()
                 raise
@@ -437,7 +472,7 @@ def load_config(*, explicit: Path | None = None, cwd: Path | None = None) -> App
         },
         "selected_generator": config.default_generator,
         "selected_prompt_profile": selected.prompt_profile if selected else config.context.prompt_profile,
-        "selected_bridge_profile": selected.bridge_profile if selected else config.context.bridge_profile,
+        "selected_genai_profile": selected.genai_profile if selected else config.context.genai_profile,
     })
 
 
@@ -445,6 +480,13 @@ def validate_config(
     data: dict[str, Any], *, loaded_files: tuple[Path, ...] = (), check_generator_links: bool = True
 ) -> AppConfig:
     data = _normalize_layer(data)
+    try:
+        genai_profiles = {
+            name: Profile.model_validate(spec)
+            for name, spec in data.get("genai_profiles", DEFAULT_CONFIG["genai_profiles"]).items()
+        }
+    except ValidationError:
+        raise ConfigError("Invalid genai_profiles connection settings") from None
     try:
         cover = validate_cover(data.get("cover", {}))
         thumbnails = validate_thumbnails(data.get("thumbnails", {}))
@@ -532,7 +574,7 @@ def validate_config(
     for name, spec in generator_raw.items():
         where = f"generation.generators.{name}"
         settings = {**asdict(GeneratorConfig()), **spec}
-        for key in ("bridge_profile", "prompt_profile"):
+        for key in ("genai_profile", "prompt_profile"):
             if not isinstance(settings[key], str) or not settings[key].strip():
                 raise ConfigError(f"{where}.{key} must be a non-empty string")
         _name(settings["prompt_profile"], f"{where}.prompt_profile")
@@ -589,7 +631,8 @@ def validate_config(
         sources=tuple(sources),
         sync=sync,
         loaded_files=loaded_files,
-        context=ContextConfig(**context_values),
+        context=ContextConfig(**context_values, genai_profiles=genai_profiles),
+        genai_profiles=genai_profiles,
         cover=cover,
         thumbnails=thumbnails,
         default_generator=default_generator,
@@ -609,6 +652,7 @@ def select_sources(config: AppConfig, selector: str | None) -> tuple[SourceConfi
 def config_as_dict(config: AppConfig) -> dict[str, Any]:
     return {
         "schema_version": config.schema_version,
+        "genai_profiles": {name: profile.model_dump(mode="json") for name, profile in config.genai_profiles.items()},
         "sources": {
             source.id: {
                 "workbooks_dir": str(source.path),

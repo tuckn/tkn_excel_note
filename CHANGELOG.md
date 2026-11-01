@@ -4,6 +4,12 @@
 
 - `pull --context` / `export --context` の Frontmatter に `contextProfiles` を追加。ノート内のシート説明・ブック要約に使った文章の profile 名を、重複なしの一覧で記録。
 
+## 5.1.0 - 2026-11-01
+
+- GenAI Bridge を Copilot CLI 1.0.105 対応済みの固定コミット `848769a4842ceacd20875ba0934cdd0fc478dc2e`（0.11.0）へ更新。
+- AI 接続設定をアプリ専用 `config.yaml` の `genai_profiles` へ統合し、Bridge の共有設定を読み込まない構成へ変更。既存の共有 profile は利用側設定へ移行が必要。
+- 設定形式を 2.2.0 に更新し、generator の接続名を `genai_profile` に統一。旧 `bridge_profile` は互換名として受理。項目単位のマージ、設定元、設定ファイル基準の実行ファイルパス、実行記録の profile 名を保持。
+
 ## 5.0.0 - 2026-10-29
 
 - CLI全般の既定出力を1行ごとの `key=value` に変更（非互換変更）。`--json` で機械処理用JSON、`--full-output` で変更なし・skipを含む全対象を表示。両指定は多段サブコマンドの前後でも利用可能。

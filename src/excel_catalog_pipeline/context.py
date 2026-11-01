@@ -345,7 +345,8 @@ def build_context(
                             for k, v in asdict(config).items()
                             if k
                             not in {
-                                "bridge_profile",
+                                "genai_profile",
+                                "genai_profiles",
                                 "overrides",
                                 "profile_dirs",
                                 "reference_inputs",

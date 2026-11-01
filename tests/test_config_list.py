@@ -50,7 +50,7 @@ def test_config_list_builtin_defaults_and_json_agree(capsys):
     assert listing.out == "\n".join(config_lines(payload)) + "\n"
     assert payload["config"]["loadedConfigFiles"] == []
     assert set(payload["winning_sources"].values()) == {"built-in"}
-    assert payload["effective_schema_version"] == "2.1.0"
+    assert payload["effective_schema_version"] == "2.2.0"
     assert payload["selected_generator"] is None
     assert payload["selected_prompt_profile"] == "default-ja"
     assert captured.err == ""
@@ -62,7 +62,7 @@ def test_config_list_readonly_does_not_load_references_profiles_or_secrets(
     monkeypatch, tmp_path, capsys, json_output
 ):
     config = tmp_path / "user.yaml"
-    config.write_text('''schema_version: "2.1.0"
+    config.write_text('''schema_version: "2.2.0"
 sources:
   example:
     workbooks_dir: absent-workbooks
@@ -71,7 +71,7 @@ generation:
   default_generator: example
   generators:
     example:
-      bridge_profile: absent-bridge-profile
+      genai_profile: absent-bridge-profile
       prompt_profile: absent-prompt-profile
       reference:
         files: [absent-reference.txt]
@@ -97,7 +97,7 @@ generation:
         payload = json.loads(captured.out)
         assert payload["selected_generator"] == "example"
         assert payload["selected_prompt_profile"] == "absent-prompt-profile"
-        assert payload["selected_bridge_profile"] == "absent-bridge-profile"
+        assert payload["selected_genai_profile"] == "absent-bridge-profile"
         assert payload["loaded_sources"][0]["migrated"] is False
         assert payload["winning_sources"]["generation.generators.example.reference.files[0]"] == str(config)
 
@@ -116,18 +116,18 @@ sources:
 sync: {max_extracted_text_chars: 100}
 generation: {max_images: 5, profile_dirs: [old-profile]}
 ''', encoding="utf-8")
-    local.write_text('''schema_version: "2.1.0"
+    local.write_text('''schema_version: "2.2.0"
 sources:
   replaced:
     workbooks_dir: new-input
     notes: {dir: new-output}
 generation: {profile_dirs: [new-profile]}
 ''', encoding="utf-8")
-    explicit.write_text('schema_version: "2.1.0"\nsync: {max_extracted_text_chars: 300}\n', encoding="utf-8")
+    explicit.write_text('schema_version: "2.2.0"\nsync: {max_extracted_text_chars: 300}\n', encoding="utf-8")
     assert cli_module.main(["--config", str(explicit), "config", "list", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert [entry["path"] for entry in payload["loaded_sources"]] == list(map(str, [user, local, explicit]))
-    assert [entry["schema_version"] for entry in payload["loaded_sources"]] == ["1.3.0", "2.1.0", "2.1.0"]
+    assert [entry["schema_version"] for entry in payload["loaded_sources"]] == ["1.3.0", "2.2.0", "2.2.0"]
     assert [entry["migrated"] for entry in payload["loaded_sources"]] == [True, False, False]
     assert payload["config"]["sync"]["max_extracted_text_chars"] == 300
     assert payload["config"]["sources"]["replaced"]["recursive"] is False

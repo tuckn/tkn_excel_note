@@ -327,7 +327,7 @@ def test_generation_bridge_overrides_are_preserved():
         },
     }
     config = config_module.validate_config(data)
-    assert config.context.bridge_profile == "codex-default"
+    assert config.context.genai_profile == "codex-default"
     assert config.context.overrides == data["generation"]["overrides"]
     assert (
         config_module.config_as_dict(config)["generation"]["overrides"]
@@ -375,7 +375,7 @@ def test_generation_layer_precedence(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "settings",
     [
-        {"bridge_profile": " "},
+        {"genai_profile": " "},
         {"overrides": []},
         {"overrides": {"bad": 1}},
         {"overrides": {"timeout_seconds": -1}},
@@ -396,8 +396,8 @@ def test_schema_version_normalizes_to_semver(version):
     config = config_module.validate_config(
         {**config_module.DEFAULT_CONFIG, "schema_version": version}
     )
-    assert config.schema_version == "2.1.0"
-    assert config_as_dict(config)["schema_version"] == "2.1.0"
+    assert config.schema_version == "2.2.0"
+    assert config_as_dict(config)["schema_version"] == "2.2.0"
 
 
 @pytest.mark.parametrize(
@@ -413,7 +413,7 @@ def test_schema_version_normalizes_to_semver(version):
         "1.0.0+build",
         "0.9.0",
         "3.0.0",
-        "2.1.1",
+        "2.2.1",
         "1.4.0",
         "1.3.1",
     ],
@@ -456,7 +456,7 @@ def test_template_uses_current_schema_and_generation():
     import yaml
 
     data = yaml.safe_load(config_template_text())
-    assert data["schema_version"] == "2.1.0"
+    assert data["schema_version"] == "2.2.0"
     assert "generation" in data and "context" not in data
     config_module.validate_config(data)
 

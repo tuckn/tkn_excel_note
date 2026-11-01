@@ -7,6 +7,17 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from tkn_genai_bridge import Profile
+
+
+def default_genai_profiles() -> dict[str, Profile]:
+    return {
+        "codex-default": Profile(provider="codex"),
+        "claude-default": Profile(provider="claude-code"),
+        "copilot-default": Profile(provider="github-copilot"),
+        "antigravity-default": Profile(provider="antigravity"),
+    }
+
 METADATA_FIELDS = (
     "title",
     "subject",
@@ -56,7 +67,7 @@ class SourceGenerationConfig:
 
 @dataclass(frozen=True)
 class GeneratorConfig:
-    bridge_profile: str = "codex-default"
+    genai_profile: str = "codex-default"
     prompt_profile: str = "default-ja"
     overrides: dict[str, Any] = field(default_factory=dict)
     reference: ReferenceConfig = field(default_factory=ReferenceConfig)
@@ -95,7 +106,7 @@ class SyncConfig:
 
 @dataclass(frozen=True)
 class ContextConfig:
-    bridge_profile: str = "codex-default"
+    genai_profile: str = "codex-default"
     overrides: dict[str, Any] = field(default_factory=dict)
     prompt_profile: str = "default-ja"
     profile_dirs: tuple[str, ...] = ()
@@ -112,6 +123,7 @@ class ContextConfig:
     # Resolved invocation data, excluded from persisted configuration.
     generator_id: str | None = None
     reference_inputs: tuple[ReferenceInput, ...] = ()
+    genai_profiles: dict[str, Profile] = field(default_factory=default_genai_profiles)
 
 
 @dataclass(frozen=True)
@@ -144,6 +156,7 @@ class AppConfig:
     thumbnails: ThumbnailConfig = field(default_factory=ThumbnailConfig)
     default_generator: str | None = None
     generators: dict[str, GeneratorConfig] = field(default_factory=dict)
+    genai_profiles: dict[str, Profile] = field(default_factory=default_genai_profiles)
     config_details: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
@@ -152,7 +165,7 @@ def context_settings(config: ContextConfig) -> dict[str, Any]:
     return {
         key: value
         for key, value in asdict(config).items()
-        if key not in {"generator_id", "reference_inputs"}
+        if key not in {"generator_id", "reference_inputs", "genai_profiles"}
     }
 
 

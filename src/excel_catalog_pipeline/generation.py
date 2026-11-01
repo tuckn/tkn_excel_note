@@ -61,7 +61,9 @@ def resolve_generation(
     if generator is not None and (not generator.strip() or generator not in config.generators):
         raise ConfigError(f"Unknown generator: {generator!r}")
     selected = generator if generator is not None else source_name or config.default_generator
-    context = replace(config.context, generator_id=selected, reference_inputs=())
+    context = replace(
+        config.context, generator_id=selected, reference_inputs=(), genai_profiles=config.genai_profiles
+    )
     references: list[tuple[str, ReferenceConfig]] = []
     if selected is not None:
         try:
@@ -70,7 +72,7 @@ def resolve_generation(
             raise ConfigError(f"Unknown generator: {selected}") from None
         context = replace(
             context,
-            bridge_profile=spec.bridge_profile,
+            genai_profile=spec.genai_profile,
             prompt_profile=spec.prompt_profile,
             overrides=dict(spec.overrides),
         )
