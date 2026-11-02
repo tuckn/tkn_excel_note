@@ -27,7 +27,6 @@ type: ExcelExport
 title: 移行手順
 author: Example User
 sourceFileName: 移行手順.xlsx
-generatedAt: '2026-10-01T03:00:00.000000+00:00'
 generationMethod: context
 contextStatus: current
 ---
@@ -70,7 +69,7 @@ contextStatus: current
 | 使い方 | コマンド | 向いている用途 | 出力 |
 | --- | --- | --- | --- |
 | 書き出し | `export` | 1つのブックやフォルダを、その場で Markdown にする | 各ブックの隣の `<ファイル名>.md`（`type: ExcelExport`） |
-| 同期 | `pull` / `push` | 決まったフォルダのブックを、ノートとして継続的に管理する | ノート用フォルダの代理ノート（`type: Excel`） |
+| 同期 | `pull` / `push` | 決まったフォルダのブックを、ノートとして継続的に管理する | ノート用フォルダの代理ノート（`type: "excel"`） |
 
 書き出しは、実行のたびに新しい Markdown を作ります。
 前回の結果を再利用しないため、`--context` を付けると毎回 AI を呼び出します。
@@ -122,7 +121,7 @@ flowchart LR
 ```
 
 AI の呼び出しは、画像対応モデルへの接続を共通化するライブラリ [GenAI Bridge](https://github.com/tuckn/tkn_genai_bridge)（`tkn_genai_bridge`）を通して行います。
-接続先・モデル・認証は、このツールではなく GenAI Bridge の設定で管理します。
+接続先・モデル・認証は、GenAI Bridge の共有設定ではなく、この CLI の設定ファイルの `genai_profiles` で管理します（「[AI 接続を準備する](#23-ai-接続を準備する--context-を使う場合)」）。
 
 ## 2. セットアップ
 
@@ -152,7 +151,7 @@ uv tool install .
 tkn-excel-note --version
 ```
 
-`tkn-excel-note 3.1.0` のようにバージョンが表示されれば、インストールは完了です。
+コマンド名に続けてバージョン番号が表示されれば、インストールは完了です。
 コマンドとオプションの一覧は `tkn-excel-note --help`、各コマンドの詳細は `tkn-excel-note export --help` のように確認できます。
 
 ### 2.3. AI 接続を準備する（`--context` を使う場合）
@@ -187,7 +186,7 @@ tkn-excel-note export "C:\path\to\book.xlsx"
 出力のファイル名は、拡張子を含む元のファイル名に `.md` を付けたものです。
 
 完了すると、標準出力に1行ごとの `key=value` で結果が表示されます。
-`"status":"success"` と `"exported":1` であれば、書き出しは成功しています。
+`status=success` と `exported=1` が表示されれば、書き出しは成功しています。
 作成した Markdown には、次の内容が入ります。
 
 - Frontmatter：タイトル・作成者などの文書プロパティ、元ファイルのパス、元ファイルの内容のハッシュ値（`sourceSnapshotSha256`）、生成日時。
@@ -361,7 +360,8 @@ Windows のパスは、例のようにシングルクォートで囲みます。
 tkn-excel-note config list
 ```
 
-`config list` は `config.cover.mode=auto` のように1行ずつ表示します。Windows パスはそのままコピーできます。
+`config list` は `config.cover.mode=auto` のように1行ずつ表示します。
+Windows パスはそのままコピーできます。
 JSON が必要な場合は `tkn-excel-note config list --json` を使います。
 
 ほかの設定キーと、設定ファイルの優先順位は「[設定リファレンス](docs/reference/configuration.md)」を参照してください。
@@ -378,9 +378,11 @@ tkn-excel-note pull --source workbooks
 `notes.dir` に、ブックごとの代理ノート `<ファイル名>.md` が作成されます。
 `recursive: true` の場合、入力フォルダの `2026/example.xlsx` は `notes.dir` の `2026/example.xlsx.md` になります。
 代理ノートの Frontmatter には、`noteId`（ノートの識別子）や `sourceFileName`（入力フォルダからの相対パス）など、同期に使う項目が入ります。
-`--context` で使った文章の profile 名は、Frontmatter の `contextProfiles` に一覧で残ります。複数の profile を使った場合も保持します。
+`--context` で使った文章の profile 名は、Frontmatter の `contextProfiles` に一覧で残ります。
+複数の profile を使った場合は、すべての名前を重複なく残します。
 
-形式は `type: "excel"` / `schemaVersion: "3.0.0"` です。先頭の基本情報、Excel文書情報、元ファイル、AI生成情報、末尾の `tags`・`created`・`updated`・`noteId` の順に揃えます。日時は日本時間・秒単位・ダブルクォート付きです。旧 `date` は次のノート更新時に `created` へ引き継ぎます。YAMLだけを一括移行する方法は「[ノートの形式](docs/reference/note-format.md#既存代理ノートのyamlだけを移行する)」を参照してください。
+代理ノートの Frontmatter は `type: "excel"`・`schemaVersion: "3.0.0"` の形式です。
+項目の並び、日時の表記、各項目の意味は「[ノートの形式](docs/reference/note-format.md)」を参照してください。
 
 結果は画面に表示され、処理ごとのレポートが `~/.tkn/excel_note/state/runs/<run-id>/` に保存されます。
 作成されたノートは `created` と表示されます。
@@ -394,10 +396,13 @@ tkn-excel-note pull --source workbooks --context --dry-run
 tkn-excel-note pull --source workbooks --context
 ```
 
-`pull` は `--source <id>` または `--all-sources` のどちらかを指定します。併用はできません。
+`pull` は `--source <id>` または `--all-sources` のどちらかを指定します。
+2つは併用できません。
 source 内の1ブックだけを取り込む場合は、ファイル名を指定します。
-相対パスは `workbooks_dir` が基準です。配下の絶対パスも使えます。
-`recursive`・`include`・`ignore` の設定は引き続き適用します。ファイル指定は `--all-sources` と併用できません。
+相対パスは `workbooks_dir` が基準です。
+`workbooks_dir` 配下の絶対パスも使えます。
+ファイルを指定した場合も、`recursive`・`include`・`ignore` の設定を適用します。
+ファイルの指定は `--all-sources` と併用できません。
 
 ```shell
 tkn-excel-note pull --source workbooks "example.xlsx" --dry-run
@@ -524,14 +529,20 @@ tkn-excel-note pull --source workbooks --cover sheet --cover-range "A1:Q50"
 
 ## 6. 実行結果の読み方
 
-すべての Python CLI は、結果を標準出力に1行ごとの `key=value` で表示します。
-入れ子は `.`、配列は `[0]`、空の配列・mappingは `[]` / `{}`、真偽値は `true` / `false`、未設定値は `null` です。
-文字列は引用符で囲まず、Windows パスは省略・二重エスケープせず表示し、制御文字だけエスケープします。
-`--json` は標準出力を1つの JSON document に切り替えます。進捗・警告・診断は常に標準エラーです。
-`--json` と `--full-output` はコマンドの前後・多段コマンドの途中にも指定できます。
-`--quiet` / `--verbose` はログ量だけを変え、TTY・パイプ・リダイレクトでも結果形式は変わりません。
-変更なし・skip の詳細は件数に集約し、省略があれば `detailsHint` に確認方法を示します。
-失敗・要確認対象は `results` に残り、パスと理由を別項目で確認できます。`--full-output` は両形式で全対象の詳細を含めます。
+コマンドの結果は、標準出力に1行ごとの `key=value` で表示します。
+入れ子のキーは `.`、配列の要素は `[0]` のような番号でつなぎます。
+空の配列・mapping は `[]` / `{}`、真偽値は `true` / `false`、未設定値は `null` と表示します。
+文字列は引用符で囲みません。
+Windows パスは省略や二重エスケープをせずに表示し、制御文字だけをエスケープします。
+進捗・警告・診断は、常に標準エラーへ出力します。
+
+`--json` を付けると、標準出力を1つの JSON document に切り替えます。
+変更のない対象や skip した対象の詳細は件数にまとめ、省略した場合は `detailsHint` に確認方法を示します。
+失敗した対象と要確認の対象は `results` に残り、パスと理由を別の項目で確認できます。
+`--full-output` を付けると、どちらの形式でも全対象の詳細を表示します。
+`--json` と `--full-output` は、コマンドの前後のどちらにも、多段のサブコマンドの途中にも指定できます。
+`--quiet` / `--verbose` が変えるのはログの量だけです。
+端末・パイプ・リダイレクトのどれに出力しても、結果の形式は変わりません。
 
 ```shell
 tkn-excel-note pull --source workbooks --dry-run
@@ -539,8 +550,8 @@ tkn-excel-note --json pull --source workbooks --dry-run
 tkn-excel-note pull --source workbooks --dry-run --full-output --json
 ```
 
-PowerShell の `Convert-XlsToOpenXml.ps1` はネイティブの `-Json` / `-FullOutput` / `-Quiet` を使用します。
-詳細は[CLI出力契約](docs/reference/cli-output.md)を参照してください。
+`.xls` を変換する PowerShell スクリプト（「[旧 `.xls` を変換する](docs/guides/catalog-operations.md#旧-xls-を変換する)」）では、同じ切り替えに `-Json` / `-FullOutput` / `-Quiet` を使います。
+出力の項目と形式の詳細は「[CLI 出力契約](docs/reference/cli-output.md)」を参照してください。
 スクリプトから利用する場合は、標準出力の JSON と終了コードで結果を判定できます。
 
 | 終了コード | 意味 |
@@ -591,7 +602,8 @@ uv tool install . --reinstall
 tkn-excel-note --version
 ```
 
-バージョンごとの変更内容は [CHANGELOG.md](CHANGELOG.md) を参照してください。
+バージョンごとの変更内容と必要な対応は [CHANGELOG.md](CHANGELOG.md) を参照してください。
+旧形式（`type: Excel`）の代理ノートを現在の形式へ移す方法は、「[既存代理ノートのYAMLだけを移行する](docs/reference/note-format.md#既存代理ノートのyamlだけを移行する)」で説明しています。
 
 ## 10. 開発と検証
 
