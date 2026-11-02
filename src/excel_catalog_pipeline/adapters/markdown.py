@@ -312,7 +312,7 @@ def render_note(
     stable_part = workbook.workbook_id or workbook.relative_path
 
     try:
-        template = load_note_template(source.profile)
+        template = load_note_template(source.template)
         if existing:
             existing_frontmatter = normalize_frontmatter(existing_frontmatter)
         description = _frontmatter_string(existing_frontmatter.get("description"))

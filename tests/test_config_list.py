@@ -38,9 +38,17 @@ def test_config_list_builtin_defaults_and_json_agree(capsys):
     assert cli_module.main(["config", "list"]) == 0
     listing = capsys.readouterr()
     assert "config.sources={}" in listing.out.splitlines()
-    assert "config.generation.profile_dirs=[]" in listing.out.splitlines()
-    assert "config.sync.delete_missing_notes=false" in listing.out.splitlines()
-    assert "config.cover.sheet=null" in listing.out.splitlines()
+    lines = listing.out.splitlines()
+    assert "config.generation.prompt_profile_dirs=[]" in lines
+    assert "config.generation.limits.max_images=24" in lines
+    assert "config.cover.enabled=true" in lines
+    assert "config.cover.sheet=null" in lines
+    assert "config.cover.image.subdir=thumbnails" in lines
+    assert "config.sync.max_extracted_text_chars=12000" in lines
+    assert not any(
+        line.startswith(("config.thumbnails.", "config.sync.delete_missing_notes"))
+        for line in lines
+    )
     assert "loaded_sources=[]" in listing.out.splitlines()
     assert "[INFO] Showing resolved configuration" in listing.err
     assert "[SUCCESS]" not in listing.err
@@ -50,7 +58,7 @@ def test_config_list_builtin_defaults_and_json_agree(capsys):
     assert listing.out == "\n".join(config_lines(payload)) + "\n"
     assert payload["config"]["loadedConfigFiles"] == []
     assert set(payload["winning_sources"].values()) == {"built-in"}
-    assert payload["effective_schema_version"] == "2.2.0"
+    assert payload["effective_schema_version"] == "3.0.0"
     assert payload["selected_generator"] is None
     assert payload["selected_prompt_profile"] == "default-ja"
     assert captured.err == ""
@@ -62,10 +70,10 @@ def test_config_list_readonly_does_not_load_references_profiles_or_secrets(
     monkeypatch, tmp_path, capsys, json_output
 ):
     config = tmp_path / "user.yaml"
-    config.write_text('''schema_version: "2.2.0"
+    config.write_text('''schema_version: "3.0.0"
 sources:
   example:
-    workbooks_dir: absent-workbooks
+    workbooks: {dir: absent-workbooks}
     notes: {dir: absent-notes}
 generation:
   default_generator: example
@@ -98,7 +106,7 @@ generation:
         assert payload["selected_generator"] == "example"
         assert payload["selected_prompt_profile"] == "absent-prompt-profile"
         assert payload["selected_genai_profile"] == "absent-bridge-profile"
-        assert payload["loaded_sources"][0]["migrated"] is False
+        assert "migrated" not in payload["loaded_sources"][0]
         assert payload["winning_sources"]["generation.generators.example.reference.files[0]"] == str(config)
 
 
@@ -107,59 +115,72 @@ def test_config_list_tracks_each_layer_and_replaced_source_defaults(tmp_path, ca
     local = tmp_path / ".tkn" / "config.yaml"
     local.parent.mkdir()
     explicit = tmp_path / "explicit.yaml"
-    user.write_text('''schema_version: "1.3.0"
+    user.write_text('''schema_version: "3.0.0"
 sources:
   replaced:
-    path: old-input
-    recursive: true
-    notes: {root: old-output}
+    workbooks: {dir: old-input, recursive: true}
+    notes: {dir: old-output}
 sync: {max_extracted_text_chars: 100}
-generation: {max_images: 5, profile_dirs: [old-profile]}
+generation: {limits: {max_images: 5}, prompt_profile_dirs: [old-profile]}
 ''', encoding="utf-8")
-    local.write_text('''schema_version: "2.2.0"
+    local.write_text('''schema_version: "3.0.0"
 sources:
   replaced:
-    workbooks_dir: new-input
+    workbooks: {dir: new-input}
     notes: {dir: new-output}
-generation: {profile_dirs: [new-profile]}
+generation: {prompt_profile_dirs: [new-profile]}
 ''', encoding="utf-8")
-    explicit.write_text('schema_version: "2.2.0"\nsync: {max_extracted_text_chars: 300}\n', encoding="utf-8")
+    explicit.write_text('schema_version: "3.0.0"\nsync: {max_extracted_text_chars: 300}\n', encoding="utf-8")
     assert cli_module.main(["--config", str(explicit), "config", "list", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert [entry["path"] for entry in payload["loaded_sources"]] == list(map(str, [user, local, explicit]))
-    assert [entry["schema_version"] for entry in payload["loaded_sources"]] == ["1.3.0", "2.2.0", "2.2.0"]
-    assert [entry["migrated"] for entry in payload["loaded_sources"]] == [True, False, False]
+    assert [entry["schema_version"] for entry in payload["loaded_sources"]] == ["3.0.0", "3.0.0", "3.0.0"]
     assert payload["config"]["sync"]["max_extracted_text_chars"] == 300
-    assert payload["config"]["sources"]["replaced"]["recursive"] is False
+    assert payload["config"]["sources"]["replaced"]["workbooks"]["recursive"] is False
     origins = payload["winning_sources"]
     assert origins["schema_version"] == "built-in"
-    assert origins["generation.max_images"] == str(user)
-    assert origins["generation.profile_dirs[0]"] == str(local)
+    assert origins["generation.limits.max_images"] == str(user)
+    assert origins["generation.limits.max_cells"] == "built-in"
+    assert origins["generation.prompt_profile_dirs[0]"] == str(local)
     assert origins["generation.overrides"] == "built-in"
     assert origins["sync.max_extracted_text_chars"] == str(explicit)
-    assert origins["sources.replaced.workbooks_dir"] == str(local)
+    assert origins["sources.replaced.workbooks.dir"] == str(local)
     assert origins["sources.replaced.notes.dir"] == str(local)
-    assert origins["sources.replaced.recursive"] == "built-in"
-    assert origins["sources.replaced.include[0]"] == "built-in"
+    assert origins["sources.replaced.workbooks.recursive"] == "built-in"
+    assert origins["sources.replaced.workbooks.include[0]"] == "built-in"
 
 
-def test_config_list_normalizes_legacy_source_arrays_and_missing_version(tmp_path, capsys):
+def test_config_list_tracks_nested_cover_image_and_missing_version(tmp_path, capsys):
     config = tmp_path / "user.yaml"
     config.write_text('''sources:
-  - id: legacy
-    path: input
-    notes: {root: output}
+  example:
+    workbooks: {dir: input}
+    notes: {dir: output, template: tkn-obsidian-v1}
+cover:
+  image: {max_edge: 480}
 ''', encoding="utf-8")
     assert cli_module.main(["config", "list", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["loaded_sources"][0]["schema_version"] is None
-    assert payload["loaded_sources"][0]["migrated"] is True
-    assert payload["winning_sources"]["sources.legacy.workbooks_dir"] == str(config)
-    assert payload["winning_sources"]["sources.legacy.notes.dir"] == str(config)
+    assert payload["config"]["sources"]["example"]["notes"]["template"] == "tkn-obsidian-v1"
+    assert payload["config"]["cover"]["image"]["max_edge"] == 480
+    assert payload["winning_sources"]["sources.example.workbooks.dir"] == str(config)
+    assert payload["winning_sources"]["sources.example.notes.dir"] == str(config)
+    assert payload["winning_sources"]["cover.image.max_edge"] == str(config)
+    assert payload["winning_sources"]["cover.image.format"] == "built-in"
 
 
 @pytest.mark.parametrize("json_output", [False, True])
-@pytest.mark.parametrize("contents", ['schema_version: "9.0.0"\n', 'unknown: true\n'])
+@pytest.mark.parametrize(
+    "contents",
+    [
+        'schema_version: "9.0.0"\n',
+        'schema_version: "2.2.0"\n',
+        'unknown: true\n',
+        'thumbnails: {max_edge: 480}\n',
+        'sources:\n  example:\n    workbooks_dir: input\n    notes: {dir: output}\n',
+    ],
+)
 def test_config_list_rejects_invalid_config_without_writes(tmp_path, capsys, contents, json_output):
     path = tmp_path / "user.yaml"
     path.write_text(contents, encoding="utf-8")

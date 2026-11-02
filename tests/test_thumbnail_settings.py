@@ -10,9 +10,10 @@ from excel_catalog_pipeline.config import (
     DEFAULT_CONFIG,
     ConfigError,
     config_as_dict,
+    cover_view,
     validate_config,
 )
-from excel_catalog_pipeline.models import ThumbnailConfig
+from excel_catalog_pipeline.models import CoverConfig, ThumbnailConfig
 from excel_catalog_pipeline.thumbnail import cover_webp
 
 from .test_sheet_cover import setup_pull
@@ -33,8 +34,28 @@ from .test_sheet_cover import setup_pull
     ],
 )
 def test_invalid_settings(values):
-    with pytest.raises(ConfigError):
-        validate_config({**DEFAULT_CONFIG, "thumbnails": values})
+    image = dict(values)
+    cover = {"enabled": image.pop("enabled")} if "enabled" in image else {}
+    with pytest.raises(ConfigError, match="cover"):
+        validate_config({**DEFAULT_CONFIG, "cover": {**cover, "image": image}})
+
+
+def test_thumbnails_section_is_unknown():
+    with pytest.raises(ConfigError, match="Unknown top-level key"):
+        validate_config({**DEFAULT_CONFIG, "thumbnails": {"max_edge": 480}})
+
+
+@pytest.mark.parametrize(
+    ("cover", "message"),
+    [
+        ({"image": None}, "cover.image must be a mapping"),
+        ({"image": {"enabled": False}}, "Unknown cover.image key"),
+        ({"enabled": "false"}, "cover.enabled must be boolean"),
+    ],
+)
+def test_invalid_cover_image_layout(cover, message):
+    with pytest.raises(ConfigError, match=message):
+        validate_config({**DEFAULT_CONFIG, "cover": cover})
 
 
 @pytest.mark.parametrize("format", ["png", "jpeg", "webp"])
@@ -51,8 +72,13 @@ def test_encoding_dimensions_and_metadata(format):
         assert image.format == format.upper()
         assert not image.getexif()
         assert not any(key in image.info for key in ("exif", "icc_profile", "xmp"))
-    config = validate_config({**DEFAULT_CONFIG, "thumbnails": asdict(settings)})
-    assert config_as_dict(config)["thumbnails"] == asdict(settings)
+    config = validate_config({**DEFAULT_CONFIG, "cover": cover_view(CoverConfig(), settings)})
+    assert config.thumbnails == settings
+    rendered = config_as_dict(config)["cover"]
+    assert rendered["enabled"] is settings.enabled
+    assert rendered["image"] == {
+        key: value for key, value in asdict(settings).items() if key != "enabled"
+    }
 
 
 def test_sheet_encoding_settings_invalidate_cache(monkeypatch, tmp_path):

@@ -87,7 +87,7 @@ class SourceConfig:
     note_root: Path
     recursive: bool = False
     ignore: tuple[str, ...] = ()
-    profile: str = "tkn-obsidian-v1"
+    template: str = "tkn-obsidian-v1"
     frontmatter_term_format: FrontmatterTermFormat = "obsidian-link"
     rename_adapter: str = "report-only"
     single_workbook: Path | None = None
@@ -97,10 +97,6 @@ class SourceConfig:
 
 @dataclass(frozen=True)
 class SyncConfig:
-    pull_preserves_user_metadata: bool = True
-    delete_missing_notes: bool = False
-    delete_missing_workbooks: bool = False
-    allow_source_rename: bool = False
     max_extracted_text_chars: int = 12000
 
 

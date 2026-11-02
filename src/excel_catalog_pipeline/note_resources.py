@@ -69,7 +69,7 @@ class NoteTemplate:
         missing = sorted(self.placeholders - values.keys())
         if missing:
             raise NoteResourceError(
-                f"Note profile {self.profile!r} is missing renderer values: {', '.join(missing)}"
+                f"Note template {self.profile!r} is missing renderer values: {', '.join(missing)}"
             )
 
         def value_for(match: re.Match[str]) -> object:
@@ -82,7 +82,7 @@ class NoteTemplate:
                 return json.dumps(value_for(match), ensure_ascii=False)
             except TypeError as exc:
                 raise NoteResourceError(
-                    f"Frontmatter value {match.group('name')!r} in note profile "
+                    f"Frontmatter value {match.group('name')!r} in note template "
                     f"{self.profile!r} is not JSON-compatible"
                 ) from exc
 
@@ -93,11 +93,11 @@ class NoteTemplate:
             loaded = yaml.safe_load(rendered_frontmatter)
         except yaml.YAMLError as exc:
             raise NoteResourceError(
-                f"Rendered Frontmatter in note profile {self.profile!r} is invalid: {exc}"
+                f"Rendered Frontmatter in note template {self.profile!r} is invalid: {exc}"
             ) from exc
         if not isinstance(loaded, dict):
             raise NoteResourceError(
-                f"Rendered Frontmatter in note profile {self.profile!r} must be a mapping"
+                f"Rendered Frontmatter in note template {self.profile!r} must be a mapping"
             )
 
         body = PLACEHOLDER_PATTERN.sub(lambda match: str(value_for(match)), self.body_template)
@@ -108,50 +108,50 @@ def _split_template(profile: str, text: str) -> tuple[str, str]:
     match = FRONTMATTER_PATTERN.fullmatch(text)
     if match is None:
         raise NoteResourceError(
-            f"Note profile {profile!r} template.md must contain YAML Frontmatter"
+            f"Note template {profile!r} template.md must contain YAML Frontmatter"
         )
     return match.group("frontmatter"), match.group("body")
 
 
 def _validate_template(profile: str, text: str) -> NoteTemplate:
     if not text.strip():
-        raise NoteResourceError(f"Note profile {profile!r} has an empty template.md")
+        raise NoteResourceError(f"Note template {profile!r} has an empty template.md")
     normalized = text.replace("\r\n", "\n")
     frontmatter_template, body_template = _split_template(profile, normalized)
 
     inspectable_frontmatter = PLACEHOLDER_PATTERN.sub("null", frontmatter_template)
     if "{{" in inspectable_frontmatter:
         raise NoteResourceError(
-            f"Note profile {profile!r} has an unsupported Frontmatter template expression"
+            f"Note template {profile!r} has an unsupported Frontmatter template expression"
         )
     try:
         frontmatter = yaml.safe_load(inspectable_frontmatter)
     except yaml.YAMLError as exc:
-        raise NoteResourceError(f"Note profile {profile!r} has invalid Frontmatter: {exc}") from exc
+        raise NoteResourceError(f"Note template {profile!r} has invalid Frontmatter: {exc}") from exc
     if not isinstance(frontmatter, dict):
-        raise NoteResourceError(f"Note profile {profile!r} Frontmatter must be a mapping")
+        raise NoteResourceError(f"Note template {profile!r} Frontmatter must be a mapping")
     # Custom profiles written for the older "excel" value stay valid; output uses NOTE_TYPE.
     if str(frontmatter.get("type", "")).casefold() != NOTE_TYPE.casefold():
-        raise NoteResourceError(f"Note profile {profile!r} type must be {NOTE_TYPE!r}")
+        raise NoteResourceError(f"Note template {profile!r} type must be {NOTE_TYPE!r}")
     schema_version = frontmatter.get("schemaVersion")
     if not isinstance(schema_version, str) or not schema_version.strip():
         raise NoteResourceError(
-            f"Note profile {profile!r} schemaVersion must be a non-empty quoted string"
+            f"Note template {profile!r} schemaVersion must be a non-empty quoted string"
         )
 
     managed_names: list[str] = []
     for match in MANAGED_BLOCK_PATTERN.finditer(body_template):
         name = match.group("name")
         if name in managed_names:
-            raise NoteResourceError(f"Note profile {profile!r} repeats managed section {name!r}")
+            raise NoteResourceError(f"Note template {profile!r} repeats managed section {name!r}")
         if HEADING_PATTERN.match(match.group("content")) is None:
             raise NoteResourceError(
-                f"Managed section {name!r} in note profile {profile!r} must start with an H2"
+                f"Managed section {name!r} in note template {profile!r} must start with an H2"
             )
         managed_names.append(name)
 
     if not managed_names:
-        raise NoteResourceError(f"Note profile {profile!r} defines no managed sections")
+        raise NoteResourceError(f"Note template {profile!r} defines no managed sections")
 
     return NoteTemplate(
         profile=profile,
@@ -172,12 +172,12 @@ def load_note_template(profile: str) -> NoteTemplate:
     """Load a profile template from the installed Python package."""
 
     if PROFILE_PATTERN.fullmatch(profile) is None:
-        raise NoteResourceError(f"Invalid note profile name: {profile!r}")
+        raise NoteResourceError(f"Invalid note template name: {profile!r}")
     resource = files("excel_catalog_pipeline").joinpath("note_profiles", profile, "template.md")
     try:
         text = resource.read_text(encoding="utf-8")
     except (FileNotFoundError, ModuleNotFoundError) as exc:
-        raise NoteResourceError(f"Unknown note profile: {profile!r}") from exc
+        raise NoteResourceError(f"Unknown note template: {profile!r}") from exc
     return _validate_template(profile, text)
 
 
@@ -201,6 +201,6 @@ def managed_blocks(rendered: str, template: NoteTemplate) -> tuple[ManagedBlock,
     names = tuple(block.name for block in blocks)
     if names != template.managed_names:
         raise NoteResourceError(
-            f"Rendered note profile {template.profile!r} changed its managed-section contract"
+            f"Rendered note template {template.profile!r} changed its managed-section contract"
         )
     return tuple(blocks)

@@ -61,7 +61,7 @@ def named_config(tmp_path):
             },
             "sources": {
                 "library": {
-                    "workbooks_dir": str(tmp_path / "books"),
+                    "workbooks": {"dir": str(tmp_path / "books")},
                     "notes": {"dir": str(tmp_path / "notes")},
                     "generation": {
                         "generator": "specific",
@@ -126,7 +126,6 @@ def test_legacy_singleton_settings_still_work(tmp_path):
         {"generators": {"good": []}},
         {"generators": {"good": {"typo": 1}}},
         {"generators": {"good": {"genai_profile": " "}}},
-        {"generators": {"good": {"prompt_profile": "auto"}}},
         {"generators": {"good": {"overrides": {"timeout_seconds": -1}}}},
         {"generators": {"good": {"reference": "text"}}},
         {"generators": {"good": {"reference": {"text": None}}}},
@@ -135,8 +134,9 @@ def test_legacy_singleton_settings_still_work(tmp_path):
         {"generators": {"good": {"reference": {"unknown": "x"}}}},
         {"default_generator": "missing"},
         {"default_generator": ""},
-        {"max_reference_chars": True},
-        {"max_reference_chars": 0},
+        {"limits": {"max_reference_chars": True}},
+        {"limits": {"max_reference_chars": 0}},
+        {"limits": {"unknown": 1}},
     ],
 )
 def test_generation_configuration_is_strict(generation):
@@ -205,7 +205,7 @@ def test_source_reference_path_is_relative_to_defining_config(tmp_path):
     directory.mkdir()
     path = directory / "config.yaml"
     path.write_text(
-        "sources:\n  library:\n    workbooks_dir: ./books\n    notes: {dir: ./notes}\n    generation:\n      reference: {files: [background.md]}\n",
+        "sources:\n  library:\n    workbooks: {dir: ./books}\n    notes: {dir: ./notes}\n    generation:\n      reference: {files: [background.md]}\n",
         encoding="utf-8",
     )
     loaded = load_config(cwd=tmp_path, explicit=path)
@@ -219,7 +219,7 @@ def test_source_can_select_generator_defined_in_a_lower_layer(tmp_path, monkeypa
     shared.write_text("generation: {generators: {general: {}}}\n", encoding="utf-8")
     explicit = tmp_path / "explicit.yaml"
     explicit.write_text(
-        "sources:\n  library:\n    workbooks_dir: ./books\n    notes: {dir: ./notes}\n    generation: {generator: general}\n",
+        "sources:\n  library:\n    workbooks: {dir: ./books}\n    notes: {dir: ./notes}\n    generation: {generator: general}\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(config_module, "global_config_path", lambda: shared)
@@ -289,7 +289,7 @@ def test_bom_newlines_cli_paths_and_content_hash(tmp_path):
 
 
 def test_combined_reference_limit_never_truncates(tmp_path):
-    config = validate_config({**DEFAULT_CONFIG, "generation": {"max_reference_chars": 10}})
+    config = validate_config({**DEFAULT_CONFIG, "generation": {"limits": {"max_reference_chars": 10}}})
     file = tmp_path / "reference.md"
     file.write_text("123456", encoding="utf-8")
     with pytest.raises(ConfigError, match="max_reference_chars"):

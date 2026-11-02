@@ -34,7 +34,7 @@ def _read_reference(path: Path, limit: int) -> str:
             content = stream.read(limit * 4 + 4)
         if len(content) > limit * 4 + 3:
             raise ConfigError(
-                "Reference exceeds generation.max_reference_chars; no content truncated"
+                "Reference exceeds generation.limits.max_reference_chars; no content truncated"
             )
         text = content.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
     except (OSError, UnicodeError) as exc:
@@ -110,7 +110,7 @@ def resolve_generation(
     size = sum(len(item.text) for item in inputs)
     if size > context.max_reference_chars:
         raise ConfigError(
-            f"References require {size:,} characters; generation.max_reference_chars="
+            f"References require {size:,} characters; generation.limits.max_reference_chars="
             f"{context.max_reference_chars:,}. No AI was called or content truncated."
         )
     return replace(context, reference_inputs=tuple(inputs))
@@ -152,7 +152,7 @@ def reference_prompt(prompt: str, config: ContextConfig) -> str:
         return prompt
     size = sum(len(item.text) for item in config.reference_inputs)
     if size > config.max_reference_chars:
-        raise ConfigError("References exceed generation.max_reference_chars; no content truncated")
+        raise ConfigError("References exceed generation.limits.max_reference_chars; no content truncated")
     blocks = [{"origin": item.origin, "text": item.text} for item in config.reference_inputs]
     return (
         prompt

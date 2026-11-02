@@ -68,7 +68,7 @@ def evidence_payload(evidence: dict[str, Any], max_chars: int | None) -> tuple[s
         encoding = "column tables" if use_tables else "ordinary JSON"
         raise ContextError(
             f"Evidence requires {len(payload):,} characters using {encoding} "
-            f"(ordinary JSON: {len(ordinary):,}); generation.max_input_chars={max_chars:,}. "
+            f"(ordinary JSON: {len(ordinary):,}); generation.limits.max_input_chars={max_chars:,}. "
             "No AI was called or content truncated."
         )
     return payload, len(ordinary), use_tables
@@ -200,7 +200,7 @@ def generate_markdown(
         config.max_input_chars if config.max_input_chars is not None else "none",
     )
     if (stage == "sheet" and not images) or len(images) > config.max_images:
-        raise ContextError("Sheet generation requires between 1 and generation.max_images images")
+        raise ContextError("Sheet generation requires between 1 and generation.limits.max_images images")
     writing = load_context_profile(config, stage=stage)
     prompt = reference_prompt(writing.prompt, config) + "\nSOURCE EVIDENCE (JSON):\n" + payload
     try:

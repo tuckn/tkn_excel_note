@@ -52,11 +52,11 @@ def tile_boxes(boxes: list[Box], config: ContextConfig) -> list[Box]:
         y1 = min(ny - 1, math.floor((box.bottom - top) / step_y))
         if (x1 - x0 + 1) * (y1 - y0 + 1) > config.max_images:
             raise ContextError(
-                "Rendering exceeds generation.max_images; increase tile dimensions or the image limit"
+                "Rendering exceeds generation.limits.max_images; increase tile dimensions or the image limit"
             )
         occupied.update((y, x) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1))
         if len(occupied) > config.max_images:
-            raise ContextError("Rendering exceeds generation.max_images; no AI was called")
+            raise ContextError("Rendering exceeds generation.limits.max_images; no AI was called")
     result = [
         Box(
             left + x * step_x,
@@ -69,7 +69,7 @@ def tile_boxes(boxes: list[Box], config: ContextConfig) -> list[Box]:
     # A low-resolution overview conveys the whole canvas and disconnected regions.
     if len(result) > 1 and right - left <= width * 16 and bottom - top <= height * 16:
         if len(result) + 1 > config.max_images:
-            raise ContextError("Tiles plus overview exceed generation.max_images; no AI was called")
+            raise ContextError("Tiles plus overview exceed generation.limits.max_images; no AI was called")
         result.insert(0, Box(left, top, right, bottom, overview=True))
     return result
 
@@ -165,7 +165,7 @@ def render_sheet(
             cell["displayText"] = str(ws.Range(cell["cell"]).Text)
         native_shapes = []
         if ws.Shapes.Count > config.max_objects:
-            raise ContextError("Native shape count exceeds generation.max_objects")
+            raise ContextError("Native shape count exceeds generation.limits.max_objects")
         for index in range(1, ws.Shapes.Count + 1):
             shape = ws.Shapes.Item(index)
             if not shape.Visible:

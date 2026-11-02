@@ -1,42 +1,45 @@
-schema_version: "2.2.0"
+schema_version: "3.0.0"
 
+# Synchronization targets for pull, push, status, adopt and delete-notes (--source ID).
 sources:
   personal-excel:
-    workbooks_dir: 'C:\path\to\excel-workbooks'
-    recursive: false
-    include:
-      - "*.xlsx"
-      - "*.xlsm"
-    ignore: []
+    workbooks:
+      dir: 'C:\path\to\excel-workbooks'
+      recursive: false
+      include:
+        - "*.xlsx"
+        - "*.xlsm"
+      ignore: []
     notes:
       dir: 'C:\path\to\obsidian-vault\reference\entities\files\Excel'
-      profile: tkn-obsidian-v1
+      template: tkn-obsidian-v1  # Proxy-note template bundled with this application.
       frontmatter_term_format: obsidian-link
       rename_adapter: report-only
+    # Optional source-specific generation settings:
+    # generation:
+    #   generator: my-codex-def
+    #   reference:
+    #     text: "Background for this source."
+    #     files: [./references/source-background.md]
 
-# Local cover generation. `sheet` needs Windows + desktop Excel, but no AI.
+# Card image of each proxy note, created by pull. `sheet` needs Windows + desktop Excel, but no AI.
 # auto: reuse the last successful mode per workbook; new workbooks use embedded.
 # Non-null values override saved per-workbook settings. null inherits saved settings.
 cover:
-  mode: auto  # auto, embedded, sheet
+  enabled: true
+  mode: auto  # auto, embedded (thumbnail stored in the workbook), sheet (rendered range)
   sheet: null  # New sheet covers: first visible worksheet
   range: null  # New sheet covers: A1:Q50
   width: null  # New sheet covers: 2400 px (600-4000)
-
-# Preview only; independent of VLM inputs, with source metadata removed.
-thumbnails:
-  enabled: true
-  subdir: thumbnails
-  max_edge: null  # Preserve existing dimensions; use 480 for compact previews.
-  format: webp  # png / jpeg / webp
-  quality: 85
-  lossless: true  # WebP only; false for quality-based lossy compression.
+  # Saved image file; independent of VLM inputs, with source metadata removed.
+  image:
+    subdir: thumbnails  # Below notes.dir. Uses content-addressed filenames.
+    max_edge: null  # Preserve existing dimensions; use 480 for compact previews.
+    format: webp  # png / jpeg / webp
+    quality: 85
+    lossless: true  # WebP only; false for quality-based lossy compression.
 
 sync:
-  pull_preserves_user_metadata: true
-  delete_missing_notes: false
-  delete_missing_workbooks: false
-  allow_source_rename: false
   max_extracted_text_chars: 12000
 
 # Optional `export --context` and `pull --source ID --context` use GenAI Bridge.
@@ -75,22 +78,16 @@ generation:
       genai_profile: codex-default
       prompt_profile: default-en
 
-  # Optional source-specific settings under sources.<id>.generation:
-  # generation:
-  #   generator: my-codex-def
-  #   reference:
-  #     text: "Background for this source."
-  #     files: [./references/source-background.md]
-
-  # Ordered parent directories for writing profiles (resolved from the working directory).
-  profile_dirs: []
-  max_reference_chars: 20000  # Total reference text per invocation; never truncated.
-  max_images: 24
-  tile_width_points: 1200
-  tile_height_points: 800
-  overlap_points: 80
-  image_dpi: 150
-  max_cells: 10000
-  max_objects: 10000
-  max_input_chars: null  # Evidence JSON limit, separate from supplementary references.
-  max_workbook_mb: 100
+  # Ordered parent directories for custom prompt profiles (resolved from the working directory).
+  prompt_profile_dirs: []
+  limits:
+    max_reference_chars: 20000  # Total reference text per invocation; never truncated.
+    max_images: 24
+    tile_width_points: 1200
+    tile_height_points: 800
+    overlap_points: 80
+    image_dpi: 150
+    max_cells: 10000
+    max_objects: 10000
+    max_input_chars: null  # Evidence JSON limit, separate from supplementary references.
+    max_workbook_mb: 100  # Also applies to sheet covers.

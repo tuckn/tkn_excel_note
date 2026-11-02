@@ -33,32 +33,64 @@ from .models import (
 )
 from .note_resources import NoteResourceError, load_note_template
 from .paths import global_config_path
-from .thumbnail_settings import validate_thumbnails
+from .thumbnail_settings import validate_cover_image
 
-SCHEMA_VERSION = "2.2.0"
+SCHEMA_VERSION = "3.0.0"
+GENERATION_LIMIT_KEYS = (
+    "max_reference_chars",
+    "max_images",
+    "tile_width_points",
+    "tile_height_points",
+    "overlap_points",
+    "image_dpi",
+    "max_cells",
+    "max_objects",
+    "max_input_chars",
+    "max_workbook_mb",
+)
+
+
+def generation_view(context: ContextConfig) -> dict[str, Any]:
+    """Shared generation settings in the configuration-file layout."""
+    settings = context_settings(context)
+    limits = {key: settings.pop(key) for key in GENERATION_LIMIT_KEYS}
+    prompt_profile_dirs = settings.pop("profile_dirs")
+    return {**settings, "prompt_profile_dirs": prompt_profile_dirs, "limits": limits}
+
+
+def cover_view(cover: CoverConfig, thumbnails: ThumbnailConfig) -> dict[str, Any]:
+    """Cover selection and image encoding in the configuration-file layout."""
+    image = asdict(thumbnails)
+    return {"enabled": image.pop("enabled"), **asdict(cover), "image": image}
+
+
+def _generation_key(name: str) -> str:
+    """Configuration-file path of an internal generation setting name."""
+    if name == "profile_dirs":
+        return "generation.prompt_profile_dirs"
+    if name in GENERATION_LIMIT_KEYS:
+        return f"generation.limits.{name}"
+    return f"generation.{name}"
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
     "sources": {},
     "genai_profiles": {name: profile.model_dump() for name, profile in default_genai_profiles().items()},
     "generation": {
-        **context_settings(ContextConfig()),
+        **generation_view(ContextConfig()),
         "default_generator": None,
         "generators": {},
     },
-    "cover": asdict(CoverConfig()),
-    "thumbnails": asdict(ThumbnailConfig()),
-    "sync": {
-        "pull_preserves_user_metadata": True,
-        "delete_missing_notes": False,
-        "delete_missing_workbooks": False,
-        "allow_source_rename": False,
-        "max_extracted_text_chars": 12000,
-    },
+    "cover": cover_view(CoverConfig(), ThumbnailConfig()),
+    "sync": asdict(SyncConfig()),
 }
-TOP_LEVEL_KEYS = {"schema_version", "sources", "sync", "generation", "cover", "thumbnails", "genai_profiles"}
+TOP_LEVEL_KEYS = set(DEFAULT_CONFIG)
 SYNC_KEYS = set(DEFAULT_CONFIG["sync"])
-SOURCE_KEYS = {"id", "workbooks_dir", "recursive", "include", "ignore", "notes", "generation"}
-NOTES_KEYS = {"dir", "profile", "frontmatter_term_format", "rename_adapter"}
+SOURCE_KEYS = {"workbooks", "notes", "generation"}
+WORKBOOKS_KEYS = {"dir", "recursive", "include", "ignore"}
+NOTES_KEYS = {"dir", "template", "frontmatter_term_format", "rename_adapter"}
+GENERATION_VIEW_KEYS = set(generation_view(ContextConfig()))
 FRONTMATTER_TERM_FORMATS = {"obsidian-link", "plain"}
 
 
@@ -98,19 +130,7 @@ class ConfigLoader(yaml.SafeLoader):
 
 
 def _source_items(raw: Any) -> dict[str, dict[str, Any]]:
-    """Use mapping keys as IDs; accept legacy lists without rewriting user files."""
-    if isinstance(raw, list):
-        result: dict[str, dict[str, Any]] = {}
-        for index, item in enumerate(raw):
-            if not isinstance(item, dict):
-                raise ConfigError(f"sources[{index}] must be a mapping")
-            source_id = item.get("id")
-            if not isinstance(source_id, str) or not source_id.strip():
-                raise ConfigError(f"sources[{index}].id must be a non-empty string")
-            if source_id in result:
-                raise ConfigError(f"Duplicate source id: {source_id}")
-            result[source_id] = item
-        raw = result
+    """Return sources keyed by their source IDs."""
     if not isinstance(raw, dict):
         raise ConfigError("sources must be a mapping keyed by source ID")
     for source_id, item in raw.items():
@@ -118,9 +138,6 @@ def _source_items(raw: Any) -> dict[str, dict[str, Any]]:
             raise ConfigError("sources keys must be non-empty strings")
         if not isinstance(item, dict):
             raise ConfigError(f"sources[{source_id!r}] must be a mapping")
-        explicit_id = item.get("id")
-        if explicit_id is not None and explicit_id != source_id:
-            raise ConfigError(f"sources[{source_id!r}].id must match its source key or be null")
     return cast(dict[str, dict[str, Any]], raw)
 
 
@@ -215,30 +232,8 @@ def _source_generation(raw: Any, where: str) -> SourceGenerationConfig:
 
 
 def _generation_settings(raw: dict[str, Any], where: str = "generation") -> dict[str, Any]:
-    """Validate generation settings and reject retired options in each layer."""
+    """Validate generation overrides and generator definitions in each layer."""
     values = deepcopy(raw)
-    if "bridge_profile" in values:
-        if "genai_profile" in values:
-            raise ConfigError(f"Do not mix {where}.bridge_profile and genai_profile")
-        values["genai_profile"] = values.pop("bridge_profile")
-    if "language" in values or values.get("prompt_profile") == "auto":
-        name = values.get("prompt_profile")
-        language = values.get("language", "Japanese")
-        if isinstance(name, str) and name.strip() and name != "auto":
-            migration = f"keep {where}.prompt_profile: {name}"
-        elif isinstance(language, str) and language.lower() in {"english", "en"}:
-            migration = f"set {where}.prompt_profile: default-en"
-        elif isinstance(language, str) and language.lower() in {"japanese", "ja"}:
-            migration = f"set {where}.prompt_profile: default-ja"
-        else:
-            migration = (
-                f"select a custom {where}.prompt_profile with the intended template language"
-            )
-        raise ConfigError(
-            f"{where}.language and {where}.prompt_profile: auto were removed; "
-            f"remove {where}.language and {migration}. "
-            "Language is defined by the selected profile templates."
-        )
     overrides = values.get("overrides", {})
     if not isinstance(overrides, dict):
         raise ConfigError(f"{where}.overrides must be a mapping")
@@ -261,7 +256,6 @@ def _generation_settings(raw: dict[str, Any], where: str = "generation") -> dict
             location = f"generation.generators.{name}"
             if not isinstance(spec, dict):
                 raise ConfigError(f"{location} must be a mapping")
-            # Retired options must fail even when a higher layer replaces them.
             spec = _generation_settings(spec, location)
             _reject_unknown(
                 spec, {"genai_profile", "prompt_profile", "overrides", "reference"}, location
@@ -313,16 +307,13 @@ def _normalize_layer(data: dict[str, Any], *, base_dir: Path | None = None) -> d
     values = deepcopy(data)
     _reject_unknown(values, TOP_LEVEL_KEYS, "top-level")
     version = values.get("schema_version", SCHEMA_VERSION)
-    if type(version) is int and version == 1:
-        version = SCHEMA_VERSION
     if not isinstance(version, str) or not re.fullmatch(
         r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version
     ):
         raise ConfigError("schema_version must be a quoted MAJOR.MINOR.PATCH version")
     parts = tuple(map(int, version.split(".")))
     current = tuple(map(int, SCHEMA_VERSION.split(".")))
-    legacy = parts[0] == 1 and parts <= (1, 3, 0)
-    if not legacy and (parts[0] != current[0] or parts > current):
+    if parts[0] != current[0] or parts > current:
         raise ConfigError(f"Unsupported schema_version: {version!r}; supported {SCHEMA_VERSION}")
     values["schema_version"] = SCHEMA_VERSION
     if "genai_profiles" in values:
@@ -351,29 +342,17 @@ def _normalize_layer(data: dict[str, Any], *, base_dir: Path | None = None) -> d
             executable = cli.get("executable")
             if executable and ("/" in executable or "\\" in executable or executable.startswith("~")):
                 cli["executable"] = str(((base_dir or Path.cwd()) / Path(executable).expanduser()).resolve())
-    # Translate prior path names per layer before validating and merging sources.
     sources = values.get("sources")
-    if isinstance(sources, (dict, list)):
-        items = sources.values() if isinstance(sources, dict) else sources
-        for item in items:
-            if not isinstance(item, dict):
+    if isinstance(sources, dict):
+        for item in sources.values():
+            if not isinstance(item, dict) or "generation" not in item:
                 continue
-            if "path" in item:
-                if "workbooks_dir" in item:
-                    raise ConfigError("Do not mix path and workbooks_dir in one source")
-                item["workbooks_dir"] = item.pop("path")
-            if "generation" in item:
-                generation = item["generation"]
-                _source_generation(generation, "source.generation")
-                if "reference" in generation:
-                    generation["reference"] = _reference_settings(
-                        generation["reference"], "source.generation.reference", base_dir=base_dir
-                    )
-            notes = item.get("notes")
-            if isinstance(notes, dict) and "root" in notes:
-                if "dir" in notes:
-                    raise ConfigError("Do not mix notes.root and notes.dir in one source")
-                notes["dir"] = notes.pop("root")
+            generation = item["generation"]
+            _source_generation(generation, "source.generation")
+            if "reference" in generation:
+                generation["reference"] = _reference_settings(
+                    generation["reference"], "source.generation.reference", base_dir=base_dir
+                )
     if "generation" in values:
         if not isinstance(values["generation"], dict):
             raise ConfigError("generation must be a mapping")
@@ -434,17 +413,10 @@ def load_config(*, explicit: Path | None = None, cwd: Path | None = None) -> App
             except ConfigError as exc:
                 exc.config_path = path.absolute()
                 raise
-            source_items = raw.get("sources", {})
-            legacy_items = source_items if isinstance(source_items, list) else source_items.values()
-            migrated = raw.get("schema_version") != SCHEMA_VERSION or isinstance(source_items, list)
-            migrated = migrated or any(
-                "path" in item or "root" in item.get("notes", {}) for item in legacy_items
-            )
             loaded_sources.append({
                 "path": str(path.absolute()),
                 "schema_version": raw.get("schema_version"),
                 "effective_schema_version": SCHEMA_VERSION,
-                "migrated": migrated,
             })
             # Schema versions describe individual inputs; they are not overrideable settings.
             layer.pop("schema_version")
@@ -476,6 +448,113 @@ def load_config(*, explicit: Path | None = None, cwd: Path | None = None) -> App
     })
 
 
+def _validate_sources(raw: Any) -> list[SourceConfig]:
+    sources: list[SourceConfig] = []
+    for source_id, item in _source_items(raw).items():
+        where = f"sources[{source_id!r}]"
+        _reject_unknown(item, SOURCE_KEYS, where)
+        workbooks = item.get("workbooks", {})
+        if not isinstance(workbooks, dict):
+            raise ConfigError(f"{where}.workbooks must be a mapping")
+        _reject_unknown(workbooks, WORKBOOKS_KEYS, f"{where}.workbooks")
+        recursive = workbooks.get("recursive", False)
+        if not isinstance(recursive, bool):
+            raise ConfigError(f"{where}.workbooks.recursive must be boolean")
+        include = workbooks.get("include", ["*.xlsx", "*.xlsm"])
+        if (
+            not isinstance(include, list)
+            or not include
+            or not all(isinstance(value, str) and value for value in include)
+        ):
+            raise ConfigError(f"{where}.workbooks.include must be a non-empty string list")
+        ignore = workbooks.get("ignore", [])
+        if not isinstance(ignore, list) or not all(
+            isinstance(value, str) and value for value in ignore
+        ):
+            raise ConfigError(f"{where}.workbooks.ignore must be a string list")
+        notes = item.get("notes")
+        if not isinstance(notes, dict):
+            raise ConfigError(f"{where}.notes must be a mapping")
+        _reject_unknown(notes, NOTES_KEYS, f"{where}.notes")
+        template = notes.get("template", "tkn-obsidian-v1")
+        if not isinstance(template, str) or not template.strip():
+            raise ConfigError(f"{where}.notes.template must be a non-empty string")
+        try:
+            load_note_template(template)
+        except NoteResourceError as exc:
+            raise ConfigError(f"{where}.notes.template: {exc}") from exc
+        frontmatter_term_format = notes.get("frontmatter_term_format", "obsidian-link")
+        if (
+            not isinstance(frontmatter_term_format, str)
+            or frontmatter_term_format not in FRONTMATTER_TERM_FORMATS
+        ):
+            allowed = ", ".join(sorted(FRONTMATTER_TERM_FORMATS))
+            raise ConfigError(f"{where}.notes.frontmatter_term_format must be one of: {allowed}")
+        sources.append(
+            SourceConfig(
+                id=source_id,
+                path=_path_value(workbooks.get("dir"), f"{where}.workbooks.dir"),
+                include=tuple(include),
+                note_root=_path_value(notes.get("dir"), f"{where}.notes.dir"),
+                recursive=recursive,
+                ignore=tuple(ignore),
+                template=template,
+                frontmatter_term_format=cast(FrontmatterTermFormat, frontmatter_term_format),
+                rename_adapter=str(notes.get("rename_adapter", "report-only")),
+                generation=_source_generation(item.get("generation", {}), f"{where}.generation"),
+            )
+        )
+    return sources
+
+
+def _context_values(raw: dict[str, Any]) -> dict[str, Any]:
+    """Validate shared generation settings and return them under internal names."""
+    _reject_unknown(raw, GENERATION_VIEW_KEYS, "generation")
+    values = dict(raw)
+    limits = values.pop("limits", {})
+    if not isinstance(limits, dict):
+        raise ConfigError("generation.limits must be a mapping")
+    _reject_unknown(limits, set(GENERATION_LIMIT_KEYS), "generation.limits")
+    if "prompt_profile_dirs" in values:
+        values["profile_dirs"] = values.pop("prompt_profile_dirs")
+    defaults = context_settings(ContextConfig())
+    context_values = {**defaults, **values, **limits}
+    for name, default in defaults.items():
+        value = context_values[name]
+        key = _generation_key(name)
+        if name == "overrides":
+            continue
+        if name == "profile_dirs":
+            if not isinstance(value, (list, tuple)) or any(
+                not isinstance(item, str) or not item.strip() for item in value
+            ):
+                raise ConfigError(f"{key} must be a list of directory paths")
+            context_values[name] = tuple(str(_path_value(item, key)) for item in value)
+            continue
+        if name == "max_input_chars":
+            if value is not None and (type(value) is not int or value <= 0):
+                raise ConfigError(f"{key} must be a positive integer or null")
+            continue
+        if isinstance(default, int):
+            if type(value) is not int or value <= 0:
+                raise ConfigError(f"{key} must be a positive integer")
+        elif not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"{key} must be a non-empty string")
+    if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", context_values["prompt_profile"]) is None:
+        raise ConfigError("generation.prompt_profile must be a profile directory name")
+    if context_values["overlap_points"] * 2 >= min(
+        context_values["tile_width_points"], context_values["tile_height_points"]
+    ):
+        raise ConfigError(
+            "generation.limits.overlap_points must be less than half the tile dimensions"
+        )
+    if not 72 <= context_values["image_dpi"] <= 300:
+        raise ConfigError("generation.limits.image_dpi must be between 72 and 300")
+    if context_values["max_images"] > 100:
+        raise ConfigError("generation.limits.max_images must be at most 100")
+    return context_values
+
+
 def validate_config(
     data: dict[str, Any], *, loaded_files: tuple[Path, ...] = (), check_generator_links: bool = True
 ) -> AppConfig:
@@ -487,9 +566,15 @@ def validate_config(
         }
     except ValidationError:
         raise ConfigError("Invalid genai_profiles connection settings") from None
+    cover_raw = data.get("cover", {})
+    if not isinstance(cover_raw, dict):
+        raise ConfigError("cover must be a mapping")
+    cover_values = dict(cover_raw)
+    enabled = cover_values.pop("enabled", True)
+    image = cover_values.pop("image", {})
     try:
-        cover = validate_cover(data.get("cover", {}))
-        thumbnails = validate_thumbnails(data.get("thumbnails", {}))
+        cover = validate_cover(cover_values)
+        thumbnails = validate_cover_image(image, enabled=enabled)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -497,71 +582,13 @@ def validate_config(
     if not isinstance(sync_raw, dict):
         raise ConfigError("sync must be a mapping")
     _reject_unknown(sync_raw, SYNC_KEYS, "sync")
-    for name in (
-        "pull_preserves_user_metadata",
-        "delete_missing_notes",
-        "delete_missing_workbooks",
-        "allow_source_rename",
-    ):
-        if not isinstance(sync_raw.get(name), bool):
-            raise ConfigError(f"sync.{name} must be boolean")
-    max_chars = sync_raw.get("max_extracted_text_chars")
+    sync_values = {**asdict(SyncConfig()), **sync_raw}
+    max_chars = sync_values["max_extracted_text_chars"]
     if not isinstance(max_chars, int) or isinstance(max_chars, bool) or max_chars <= 0:
         raise ConfigError("sync.max_extracted_text_chars must be a positive integer")
-    sync = SyncConfig(**sync_raw)
+    sync = SyncConfig(**sync_values)
 
-    sources_raw = _source_items(data.get("sources"))
-    sources: list[SourceConfig] = []
-    for source_id, item in sources_raw.items():
-        where = f"sources[{source_id!r}]"
-        _reject_unknown(item, SOURCE_KEYS, where)
-        recursive = item.get("recursive", False)
-        if not isinstance(recursive, bool):
-            raise ConfigError(f"{where}.recursive must be boolean")
-        include = item.get("include", ["*.xlsx", "*.xlsm"])
-        if (
-            not isinstance(include, list)
-            or not include
-            or not all(isinstance(value, str) and value for value in include)
-        ):
-            raise ConfigError(f"{where}.include must be a non-empty string list")
-        ignore = item.get("ignore", [])
-        if not isinstance(ignore, list) or not all(
-            isinstance(value, str) and value for value in ignore
-        ):
-            raise ConfigError(f"{where}.ignore must be a string list")
-        notes = item.get("notes")
-        if not isinstance(notes, dict):
-            raise ConfigError(f"{where}.notes must be a mapping")
-        _reject_unknown(notes, NOTES_KEYS, f"{where}.notes")
-        profile = notes.get("profile", "tkn-obsidian-v1")
-        if not isinstance(profile, str) or not profile.strip():
-            raise ConfigError(f"{where}.notes.profile must be a non-empty string")
-        try:
-            load_note_template(profile)
-        except NoteResourceError as exc:
-            raise ConfigError(f"{where}.notes.profile: {exc}") from exc
-        frontmatter_term_format = notes.get("frontmatter_term_format", "obsidian-link")
-        if (
-            not isinstance(frontmatter_term_format, str)
-            or frontmatter_term_format not in FRONTMATTER_TERM_FORMATS
-        ):
-            allowed = ", ".join(sorted(FRONTMATTER_TERM_FORMATS))
-            raise ConfigError(f"{where}.notes.frontmatter_term_format must be one of: {allowed}")
-        sources.append(
-            SourceConfig(
-                id=source_id,
-                path=_path_value(item.get("workbooks_dir"), f"{where}.workbooks_dir"),
-                include=tuple(include),
-                note_root=_path_value(notes.get("dir"), f"{where}.notes.dir"),
-                recursive=recursive,
-                ignore=tuple(ignore),
-                profile=profile,
-                frontmatter_term_format=cast(FrontmatterTermFormat, frontmatter_term_format),
-                rename_adapter=str(notes.get("rename_adapter", "report-only")),
-                generation=_source_generation(item.get("generation", {}), f"{where}.generation"),
-            )
-        )
+    sources = _validate_sources(data.get("sources"))
     context_raw = data.get("generation", {})
     if not isinstance(context_raw, dict):
         raise ConfigError("generation must be a mapping")
@@ -591,41 +618,7 @@ def validate_config(
         for where, selected_generator in selections:
             if selected_generator is not None and selected_generator not in generators:
                 raise ConfigError(f"{where}: unknown generator: {selected_generator}")
-    defaults = context_settings(ContextConfig())
-    _reject_unknown(context_raw, set(defaults), "generation")
-    context_values = {**defaults, **context_raw}
-    for name, default in defaults.items():
-        value = context_values[name]
-        if name == "overrides":
-            continue
-        if name == "profile_dirs":
-            if not isinstance(value, (list, tuple)) or any(
-                not isinstance(item, str) or not item.strip() for item in value
-            ):
-                raise ConfigError("generation.profile_dirs must be a list of directory paths")
-            context_values[name] = tuple(
-                str(_path_value(item, "generation.profile_dirs")) for item in value
-            )
-            continue
-        if name == "max_input_chars":
-            if value is not None and (type(value) is not int or value <= 0):
-                raise ConfigError("generation.max_input_chars must be a positive integer or null")
-            continue
-        if isinstance(default, int):
-            if type(value) is not int or value <= 0:
-                raise ConfigError(f"generation.{name} must be a positive integer")
-        elif not isinstance(value, str) or not value.strip():
-            raise ConfigError(f"generation.{name} must be a non-empty string")
-    if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", context_values["prompt_profile"]) is None:
-        raise ConfigError("generation.prompt_profile must be a profile directory name")
-    if context_values["overlap_points"] * 2 >= min(
-        context_values["tile_width_points"], context_values["tile_height_points"]
-    ):
-        raise ConfigError("generation.overlap_points must be less than half the tile dimensions")
-    if not 72 <= context_values["image_dpi"] <= 300:
-        raise ConfigError("generation.image_dpi must be between 72 and 300")
-    if context_values["max_images"] > 100:
-        raise ConfigError("generation.max_images must be at most 100")
+    context_values = _context_values(context_raw)
     return AppConfig(
         schema_version=SCHEMA_VERSION,
         sources=tuple(sources),
@@ -655,33 +648,28 @@ def config_as_dict(config: AppConfig) -> dict[str, Any]:
         "genai_profiles": {name: profile.model_dump(mode="json") for name, profile in config.genai_profiles.items()},
         "sources": {
             source.id: {
-                "workbooks_dir": str(source.path),
-                "recursive": source.recursive,
-                "include": list(source.include),
-                "ignore": list(source.ignore),
-                "generation": asdict(source.generation),
+                "workbooks": {
+                    "dir": str(source.path),
+                    "recursive": source.recursive,
+                    "include": list(source.include),
+                    "ignore": list(source.ignore),
+                },
                 "notes": {
                     "dir": str(source.note_root),
-                    "profile": source.profile,
+                    "template": source.template,
                     "frontmatter_term_format": source.frontmatter_term_format,
                     "rename_adapter": source.rename_adapter,
                 },
+                "generation": asdict(source.generation),
             }
             for source in config.sources
         },
-        "sync": {
-            "pull_preserves_user_metadata": config.sync.pull_preserves_user_metadata,
-            "delete_missing_notes": config.sync.delete_missing_notes,
-            "delete_missing_workbooks": config.sync.delete_missing_workbooks,
-            "allow_source_rename": config.sync.allow_source_rename,
-            "max_extracted_text_chars": config.sync.max_extracted_text_chars,
-        },
+        "sync": asdict(config.sync),
         "generation": {
-            **context_settings(config.context),
+            **generation_view(config.context),
             "default_generator": config.default_generator,
             "generators": {name: asdict(spec) for name, spec in config.generators.items()},
         },
-        "cover": asdict(config.cover),
-        "thumbnails": asdict(config.thumbnails),
+        "cover": cover_view(config.cover, config.thumbnails),
         "loadedConfigFiles": [str(path) for path in config.loaded_files],
     }

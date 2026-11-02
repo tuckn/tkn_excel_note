@@ -47,8 +47,8 @@ cover: "[[catalog/thumbnails/excel-cover-<画像のハッシュ値>.webp]]"
 ```
 
 ```shell
-tkn-excel-note pull --source workbooks --dry-run
-tkn-excel-note pull --source workbooks
+tkn-excel-note pull --source library --dry-run
+tkn-excel-note pull --source library
 ```
 
 - 対象は、`.xlsx` / `.xlsm` のファイル内に保存されたサムネイルです。シートに挿入した画像は使いません。
@@ -64,9 +64,9 @@ tkn-excel-note pull --source workbooks
 保存済みのシートを Excel で描画し、指定した範囲を1枚の WebP（可逆圧縮）にします。
 
 ```shell
-tkn-excel-note pull --source workbooks --cover sheet --dry-run
-tkn-excel-note pull --source workbooks --cover sheet
-tkn-excel-note pull --source workbooks --cover sheet --cover-sheet "概要" --cover-range "B2:R51" --cover-width 3000
+tkn-excel-note pull --source library --cover sheet --dry-run
+tkn-excel-note pull --source library --cover sheet
+tkn-excel-note pull --source library --cover sheet --cover-sheet "概要" --cover-range "B2:R51" --cover-width 3000
 ```
 
 | オプション | 既定値 | 意味 |
@@ -101,7 +101,7 @@ Excel の起動、画像の作成、ノート・同期記録・レポートの�
 
 画像は最大 1600 万画素、描画する範囲は幅・高さとも 12,000 ポイントまでです。
 超える場合は、範囲か画像の幅を小さくしてください。
-入力ブックのサイズの上限には、`generation.max_workbook_mb`（既定 100 MiB）を使います。
+入力ブックのサイズの上限には、`generation.limits.max_workbook_mb`（既定 100 MiB）を使います。
 
 設定ファイルで常に `sheet` 方式を使う方法は、「[cover の設定](../reference/configuration.md#cover-の設定)」を参照してください。
 
@@ -122,15 +122,15 @@ Excel の起動、画像の作成、ノート・同期記録・レポートの�
 ノートを指定して削除する場合は、次のように実行します。
 
 ```shell
-tkn-excel-note delete-notes --source workbooks --note "example.xlsx.md" --dry-run
-tkn-excel-note delete-notes --source workbooks --note "example.xlsx.md"
+tkn-excel-note delete-notes --source library --note "example.xlsx.md" --dry-run
+tkn-excel-note delete-notes --source library --note "example.xlsx.md"
 ```
 
 元ブックがないノートをまとめて削除する場合は、`--all-missing` を使います。
 
 ```shell
-tkn-excel-note delete-notes --source workbooks --all-missing --dry-run
-tkn-excel-note delete-notes --source workbooks --all-missing
+tkn-excel-note delete-notes --source library --all-missing --dry-run
+tkn-excel-note delete-notes --source library --all-missing
 ```
 
 `--note` と `--all-missing` のどちらか一方を指定します。
@@ -147,7 +147,7 @@ tkn-excel-note delete-notes --source workbooks --all-missing
 
 - 元ブックが存在するノートは削除しません。`--note` で指定した場合も削除せず、`--all-missing` の場合は対象から外します。
 - 元ブックの存在は、記録したパス、ブックの固定 ID、内容の照合で確認します。ブックを移動・名前変更していても見落とさないよう、設定したすべての source の入力フォルダを、サブフォルダや除外したファイルも含めて調べます。
-- 対象のノートは、source の `recursive`、`include`、`ignore` の設定に従って選びます。
+- 対象のノートは、source の `workbooks` の `recursive`、`include`、`ignore` の設定に従って選びます。
 - `--all-missing` では、Frontmatter の `sourceRoot` が別の source を示すノートを対象外（`skipped-note`）にします。
 - 入力フォルダが見つからない、読み取れない、同期記録が欠けている・曖昧、同じブックのノートが重複しているなどの問題がある場合は、何も削除せずに停止します。
 
@@ -207,4 +207,4 @@ PowerShell でリポジトリのフォルダに移動し、入力フォルダの
 
 次回の `pull` で、自動管理の cover は `thumbnails/` の WebP へのリンクに更新します。シート方式は同期記録と一致する旧画像を変換に再利用し、正本が変わっている場合は再描画します。`--dry-run` は画像・ノート・同期記録を書き込みません。手動指定の cover と旧 `img/` の画像は保持します。VLM 用の出典画像は引き続き `img/` の PNG を使います。
 
-`thumbnails` 設定で最大辺・品質・形式などを変更できます。たとえば `max_edge: 480`、`format: webp`、`quality: 85`、`lossless: false` で小さなプレビューを生成できます。詳細は[設定リファレンス](../reference/configuration.md#プレビュー画像の設定)を参照してください。
+`cover.image` の設定で最大辺・品質・形式などを変更できます。たとえば `max_edge: 480`、`format: webp`、`quality: 85`、`lossless: false` で小さなプレビューを生成できます。詳細は[設定リファレンス](../reference/configuration.md#画像ファイルの形式)を参照してください。

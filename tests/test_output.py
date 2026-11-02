@@ -25,7 +25,7 @@ def isolated(tmp_path, monkeypatch):
 def test_sync_attention_paths_details_and_readonly(monkeypatch, tmp_path, capsys, flags):
     workbook = create_workbook(tmp_path / "日本語 books" / "book.xlsx")
     settings = config.validate_config({**config.DEFAULT_CONFIG, "sources": {"example": {
-        "workbooks_dir": str(workbook.parent), "notes": {"dir": str(tmp_path / "notes")}}}})
+        "workbooks": {"dir": str(workbook.parent)}, "notes": {"dir": str(tmp_path / "notes")}}}})
     monkeypatch.setattr(cli, "load_config", lambda **kwargs: settings)
     actions = [Action("unchanged", "example", source_path="book.xlsx"),
                Action("read-error", "example", source_path="日本語 bad.xlsx", message="denied\nretry"),

@@ -127,7 +127,7 @@ def test_oversize_evidence_reports_required_characters_before_ai(setup_provider,
     image, journal = setup_provider
     evidence = {"sheet": "Data", "cells": [{"cell": "A1", "text": "x" * 250}]}
     monkeypatch.setattr(cli, "run_process", lambda *a, **k: pytest.fail("AI must not run"))
-    with pytest.raises(ContextError, match=r"Evidence requires .+generation.max_input_chars=100"):
+    with pytest.raises(ContextError, match=r"Evidence requires .+generation.limits.max_input_chars=100"):
         provider.generate_markdown(
             ContextConfig(max_input_chars=100), evidence, [image], journal, LOGGER
         )

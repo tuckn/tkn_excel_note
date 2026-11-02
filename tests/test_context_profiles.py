@@ -165,8 +165,8 @@ def test_literal_code_headings_are_preserved():
 def test_config_rejects_invalid_profile_directory_lists(value):
     from excel_catalog_pipeline.config import DEFAULT_CONFIG, ConfigError, validate_config
 
-    with pytest.raises(ConfigError, match="profile_dirs"):
-        validate_config({**DEFAULT_CONFIG, "generation": {"profile_dirs": value}})
+    with pytest.raises(ConfigError, match="generation.prompt_profile_dirs must be"):
+        validate_config({**DEFAULT_CONFIG, "generation": {"prompt_profile_dirs": value}})
 
 
 def test_config_accepts_custom_name_and_resolves_directory_paths(tmp_path, monkeypatch):
@@ -176,7 +176,7 @@ def test_config_accepts_custom_name_and_resolves_directory_paths(tmp_path, monke
     config = validate_config(
         {
             **DEFAULT_CONFIG,
-            "generation": {"prompt_profile": "technical-notes", "profile_dirs": ["profiles"]},
+            "generation": {"prompt_profile": "technical-notes", "prompt_profile_dirs": ["profiles"]},
         }
     )
     assert config.context.profile_dirs == (str(tmp_path / "profiles"),)

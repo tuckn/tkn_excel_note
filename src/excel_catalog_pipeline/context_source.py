@@ -100,7 +100,7 @@ def extract_sheet(
                 )
                 if len(cells) > max_cells:
                     raise ContextError(
-                        f"Sheet exceeds generation.max_cells ({max_cells}); no content was truncated"
+                        f"Sheet exceeds generation.limits.max_cells ({max_cells}); no content was truncated"
                     )
         objects: list[dict[str, Any]] = []
         for drawing in root.findall(S + "drawing"):
@@ -127,7 +127,7 @@ def extract_sheet(
                 )
                 if len(objects) > max_objects:
                     raise ContextError(
-                        f"Sheet exceeds generation.max_objects ({max_objects}); no content was truncated"
+                        f"Sheet exceeds generation.limits.max_objects ({max_objects}); no content was truncated"
                     )
         # Hash the selected sheet's complete internal dependency graph. Shared strings
         # are limited to used entries, so editing unrelated cell strings is inexpensive.

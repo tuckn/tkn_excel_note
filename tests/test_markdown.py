@@ -108,7 +108,7 @@ def test_packaged_note_profile_owns_markdown_structure(tmp_path: Path) -> None:
     source = config(tmp_path)
     workbook = inspect_workbook(workbook_path, source, max_text_chars=1000)
 
-    template = load_note_template(source.profile)
+    template = load_note_template(source.template)
     rendered = render_note(workbook, source)
     note_path = tmp_path / "rendered.md"
     note_path.write_text(rendered, encoding="utf-8")
@@ -211,11 +211,11 @@ def test_unknown_note_profile_is_rejected_when_rendering(tmp_path: Path) -> None
         path=tmp_path,
         include=("**/*.xlsx",),
         note_root=tmp_path / "notes",
-        profile="missing-profile",
+        template="missing-profile",
     )
     workbook = inspect_workbook(workbook_path, source, max_text_chars=1000)
 
-    with pytest.raises(NoteError, match="Unknown note profile"):
+    with pytest.raises(NoteError, match="Unknown note template"):
         render_note(workbook, source)
 
 

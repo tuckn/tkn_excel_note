@@ -479,14 +479,13 @@ def test_context_cli_dry_run_has_single_json_output_and_no_artifacts(
     config_path.write_text(
         yaml.safe_dump(
             {
-                "schema_version": 1,
-                "sources": [
-                    {
-                        "id": source.id,
-                        "path": str(source.path),
-                        "notes": {"root": str(source.note_root)},
+                "schema_version": "3.0.0",
+                "sources": {
+                    source.id: {
+                        "workbooks": {"dir": str(source.path)},
+                        "notes": {"dir": str(source.note_root)},
                     }
-                ],
+                },
             }
         ),
         encoding="utf-8",

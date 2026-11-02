@@ -84,7 +84,7 @@ def load_context_profile(config: ContextConfig, *, stage: str = "sheet") -> Cont
     if root is None:
         root = files("excel_catalog_pipeline").joinpath("context_profiles", name)
     if not root.is_dir():
-        raise ContextError(f"Unknown context profile: {name}; check generation.profile_dirs")
+        raise ContextError(f"Unknown context profile: {name}; check generation.prompt_profile_dirs")
     prefix = "" if stage == "sheet" else "workbook-"
     names = (prefix + "prompt.md", prefix + "output.schema.json", prefix + "template.md")
     try:

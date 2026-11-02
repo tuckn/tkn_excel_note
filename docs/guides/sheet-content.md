@@ -92,7 +92,7 @@ Excel の起動、AI の認証と呼び出し、ファイルの保存は行い�
 `pull --source <id> --context --sheet <名前>` は、source のすべてのブックに同じシート名の選択を適用します。
 その名前のシートがないブックはエラーになります。
 1ブックの特定シートだけを更新する場合は、`pull --source <id> "example.xlsx" --sheet <名前> --context` と指定します。
-ファイルの相対パスは source の `workbooks_dir` が基準です。
+ファイルの相対パスは source の `workbooks.dir` が基準です。
 
 ## 補足文を渡す
 
@@ -101,7 +101,7 @@ Excel の起動、AI の認証と呼び出し、ファイルの保存は行い�
 どちらも繰り返し指定でき、併用できます。
 
 ```shell
-tkn-excel-note pull --source workbooks --context --reference "移行方式の比較検討メモです。" --reference-file "C:\path\to\background.md" --dry-run
+tkn-excel-note pull --source library --context --reference "移行方式の比較検討メモです。" --reference-file "C:\path\to\background.md" --dry-run
 ```
 
 AI には、補足文を Excel 由来の情報とは別に渡し、次のように扱うよう指示します。
@@ -194,7 +194,7 @@ AI には、読み取れた事実と推測・不明点を区別するよう指�
 意図して生成し直す場合だけ、`--force` を指定します。
 
 ```shell
-tkn-excel-note pull --source workbooks --context --sheet "手順" --force
+tkn-excel-note pull --source library --context --sheet "手順" --force
 ```
 
 生成中にブックやノートが変更されたことを検出した場合は、`--force` を指定していても停止します。
@@ -313,13 +313,13 @@ profile のフォルダには、次の6つのファイルを置きます。
 
 ### profile を使う
 
-profile のフォルダを置いた親フォルダを、`generation.profile_dirs` に指定します。
+profile のフォルダを置いた親フォルダを、`generation.prompt_profile_dirs` に指定します。
 次の例では、`C:\path\to\profiles\technical-notes\` を読み込みます。
 
 ```yaml
 generation:
   prompt_profile: technical-notes
-  profile_dirs:
+  prompt_profile_dirs:
     - 'C:\path\to\profiles'
 ```
 
@@ -328,7 +328,7 @@ tkn-excel-note export "C:\path\to\book.xlsx" --context --sheet "Sheet1" --profil
 tkn-excel-note export "C:\path\to\book.xlsx" --context --sheet "Sheet1" --profile technical-notes
 ```
 
-`profile_dirs` は記載した順に探し、最初に見つかった同名のフォルダを使います。
+`prompt_profile_dirs` は記載した順に探し、最初に見つかった同名のフォルダを使います。
 見つからない場合は、同梱の profile から探します。
 相対パスは、コマンドを実行したフォルダが基準です。
 profile 名には英小文字・数字・`-`・`_`・`.` を使え、先頭は英小文字か数字にします。

@@ -13,7 +13,7 @@
 4. `--config` で指定したファイル。
 
 `generation` のような項目の集まりは、ファイルをまたいで項目単位で上書きします。
-一方、`sources` と、`include` / `ignore` / `profile_dirs` のような一覧は、後のファイルに書くと全体を置き換えます。
+一方、`sources` と、`include` / `ignore` / `prompt_profile_dirs` のような一覧は、後のファイルに書くと全体を置き換えます。
 同じ source の設定を複数のファイルに分けて書くことはできません。
 
 設定ファイル内の相対パスは、原則としてコマンドを実行したフォルダを基準に解決します。
@@ -36,7 +36,7 @@ tkn-excel-note config list --json
 | 出力項目 | 内容 |
 | --- | --- |
 | `config` | 解決済みの設定。`loadedConfigFiles` に読み込んだファイルを優先順位の順で列挙します。 |
-| `loaded_sources` | 各ファイルの絶対パス、読み込んだ `schema_version`、`effective_schema_version`、読み取り時の正規化の有無（`migrated`）。版が省略された入力は `null` で表示します。 |
+| `loaded_sources` | 各ファイルの絶対パス、読み込んだ `schema_version`、`effective_schema_version`。版が省略された入力は `null` で表示します。 |
 | `winning_sources` | 各設定値の決定元。ファイルの絶対パスまたは `built-in`。配列の各要素も表示します。 |
 | `effective_schema_version` | 内部で使用する設定スキーマ版。ファイルによる上書き対象ではありません。 |
 | `selected_generator` / `selected_prompt_profile` / `selected_genai_profile` | 既定の生成設定と、その設定が選ぶ profile。source 固有の選択は `config.sources` で確認します。 |
@@ -50,23 +50,24 @@ tkn-excel-note config list --json
 | `push`、`status`、`adopt`、`delete-notes` | `sources` |
 
 `pull` は `--source <id>` または `--all-sources` のどちらかが必須です。`--all-sources` は登録済みのすべての source を処理します。
-`pull --source <id> "example.xlsx"` で1ブックに限定できます。相対パスは `workbooks_dir` が基準で、配下の絶対パスも使えます。
-ファイルは `recursive`・`include`・`ignore` の対象範囲内に限ります。`--all-sources` との併用はできません。
+`pull --source <id> "example.xlsx"` で1ブックに限定できます。相対パスは `workbooks.dir` が基準で、配下の絶対パスも使えます。
+ファイルは `workbooks` の `recursive`・`include`・`ignore` の対象範囲内に限ります。`--all-sources` との併用はできません。
 `push`、`status`、`adopt`、`delete-notes` には `--source <id>` が必須です。
 
 ## source の設定
 
-source は、入力ブックのフォルダと代理ノートの保存先を組にした同期対象です。
+source は、入力ブック側（`workbooks`）と代理ノート側（`notes`）を組にした同期対象です。
 `sources.<id>` の `<id>` が、`--source` で指定する名前になります。
+source を使うのは `pull`・`push`・`status`・`adopt`・`delete-notes` で、`export` は使いません。
 
 | 設定キー（`sources.<id>.` 以下） | 既定値 | 意味 |
 | --- | --- | --- |
-| `workbooks_dir` | なし（必須） | 入力ブックのフォルダです。 |
-| `recursive` | `false` | `true` にすると、サブフォルダのブックも対象にします。 |
-| `include` | `['*.xlsx', '*.xlsm']` | 対象にするファイルのパターンです。 |
-| `ignore` | `[]` | 対象から外すファイルのパターンです。 |
+| `workbooks.dir` | なし（必須） | 入力ブックのフォルダです。 |
+| `workbooks.recursive` | `false` | `true` にすると、サブフォルダのブックも対象にします。 |
+| `workbooks.include` | `['*.xlsx', '*.xlsm']` | 対象にするファイルのパターンです。 |
+| `workbooks.ignore` | `[]` | 対象から外すファイルのパターンです。 |
 | `notes.dir` | なし（必須） | 代理ノートを保存するフォルダです。 |
-| `notes.profile` | `tkn-obsidian-v1` | 代理ノートのテンプレートです。現在は同梱の `tkn-obsidian-v1` だけです。 |
+| `notes.template` | `tkn-obsidian-v1` | 代理ノートのテンプレートです。現在は同梱の `tkn-obsidian-v1` だけです。 |
 | `notes.frontmatter_term_format` | `obsidian-link` | `keywords` と `categories` の書式です。`obsidian-link` は `[[...]]` のリンク、`plain` は通常の文字列です。 |
 | `notes.rename_adapter` | `report-only` | ブックの名前変更・移動の扱いです。`report-only` は報告だけ、`filesystem` はファイルを移動します。条件は「[名前変更と移動](synchronization.md#名前変更と移動)」を参照してください。 |
 | `generation.generator` | なし | この source で使う generator です。「[名前付き generator と補足文](#名前付き-generator-と補足文)」を参照してください。 |
@@ -82,18 +83,19 @@ source は、入力ブックのフォルダと代理ノートの保存先を組�
 
 ```yaml
 sources:
-  workbooks:
-    workbooks_dir: 'C:\path\to\excel-workbooks'
-    recursive: true
-    include:
-      - "*.xlsx"
-      - "*.xlsm"
-    ignore:
-      - "archive/**"
-      - "**/Temp/**"
+  library:
+    workbooks:
+      dir: 'C:\path\to\excel-workbooks'
+      recursive: true
+      include:
+        - "*.xlsx"
+        - "*.xlsm"
+      ignore:
+        - "archive/**"
+        - "**/Temp/**"
     notes:
       dir: 'C:\path\to\excel-notes'
-      profile: tkn-obsidian-v1
+      template: tkn-obsidian-v1
       frontmatter_term_format: obsidian-link
       rename_adapter: report-only
 ```
@@ -106,8 +108,7 @@ Windows のパスをシングルクォートで囲むと、バックスラッシ
 | --- | --- | --- |
 | `sync.max_extracted_text_chars` | `12000` | 代理ノートの「Extracted Text」に出力する、1ブックあたりの最大文字数です。`export` には適用しません。 |
 
-`config init` で作成した設定ファイルには、`sync.pull_preserves_user_metadata`、`sync.delete_missing_notes`、`sync.delete_missing_workbooks`、`sync.allow_source_rename` も含まれます。
-これらの値は読み込まれますが、処理の動作は変わりません。
+同期の動作は次のとおりです。
 
 - 同期では、未知の Frontmatter 項目と管理マーカー外の本文を常に保持します。
 - 同期で、ブックや代理ノートを自動で削除することはありません。元ブックがない代理ノートを削除するには、[`delete-notes`](../guides/catalog-operations.md#元ブックがない代理ノートを削除する)を使います。
@@ -115,11 +116,13 @@ Windows のパスをシングルクォートで囲むと、バックスラッシ
 
 ## cover の設定
 
-トップレベルの `cover` は、`pull` で作るカード表示用の画像の作り方を指定します。
+トップレベルの `cover` は、`pull` で作るカード表示用の画像（代理ノートの `cover`）を指定します。
+画像の取り方（`mode`・`sheet`・`range`・`width`）と、保存する画像ファイルの形式（`image`）をまとめて設定します。
 `export` は cover を作りません。
 
 | 設定キー | 既定値 | 意味 |
 | --- | --- | --- |
+| `cover.enabled` | `true` | `false` にすると cover の画像を作らず、既存の cover を保持します。 |
 | `cover.mode` | `auto` | `embedded` はブックに埋め込まれたサムネイル、`sheet` はシートの指定範囲の画像です。`auto` は、ブックごとに最後に成功した方式を使い、記録がなければ `embedded` を使います。 |
 | `cover.sheet` | `null` | 画像にするシートの名前です。 |
 | `cover.range` | `null` | 画像にするセル範囲です。 |
@@ -151,7 +154,34 @@ cover:
 
 シート画像の方式には、Windows とデスクトップ版 Excel が必要です。
 AI の設定は不要です。
+入力ブックのサイズの上限には `generation.limits.max_workbook_mb` を使います。
 画像の仕様は「[シートの指定範囲を画像にする](../guides/catalog-operations.md#シートの指定範囲を画像にする)」を参照してください。
+
+### 画像ファイルの形式
+
+`cover.image` は、cover 用に保存する画像ファイルの形式です。
+どちらの方式の画像にも適用します。VLM 用の `img/` とは独立し、EXIF・ICC・XMP などのメタデータを除去します。
+
+```yaml
+cover:
+  image:
+    subdir: thumbnails
+    max_edge: 480
+    format: webp
+    quality: 85
+    lossless: false
+```
+
+| 設定キー（`cover.image.` 以下） | 既定値 | 意味 |
+| --- | --- | --- |
+| `subdir` | `thumbnails` | 画像の保存先です。`notes.dir` 直下の安全な単一フォルダ名を指定します。 |
+| `max_edge` | `null` | 長辺の最大ピクセル数です。64～4000 または `null`（元の寸法を維持）を指定します。 |
+| `format` | `webp` | `png`・`jpeg`・`webp` のいずれかです。 |
+| `quality` | `85` | 1～100 の品質です。 |
+| `lossless` | `true` | 可逆圧縮にします。WebP 専用で、PNG は常に可逆圧縮です。 |
+
+手動指定の cover・旧画像は変更・削除しません。
+設定を変えたシート方式は再描画しますが、旧形式の同期済みキャッシュは変換して利用できます。
 
 ## AI 生成の設定
 
@@ -186,11 +216,6 @@ genai_profiles:
 未定義の接続先は生成の準備時にエラーとなり、共有設定へフォールバックしません。
 Copilot CLI は 1.0.105 以降が対象で、廃止された `--no-remote` を渡さず `--sync-session=off` を使用します。
 
-**既存設定の移行**：共有設定から使用中の profile をこのファイルの `genai_profiles` へコピーし、
-generator の `bridge_profile` を `genai_profile` に変更します。共有設定の変更・削除は不要です。
-旧 `bridge_profile` は読み込み時に互換名として扱いますが、参照先は専用の `genai_profiles` です。
-同一設定箇所への新旧名の併記はエラーです。共有設定のカスタマイズは自動では取り込まれないため、
-同名の組み込み接続先を使っていた場合も、モデル・認証・タイムアウトなどの値を移してください。
 使い方は「[AI によるシート説明とブック要約](../guides/sheet-content.md)」を参照してください。
 
 ### 名前付き generator と補足文
@@ -215,10 +240,12 @@ generation:
     my-codex-en:
       genai_profile: codex-default
       prompt_profile: default-en
-  max_reference_chars: 20000
+  limits:
+    max_reference_chars: 20000
 sources:
-  workbooks:
-    workbooks_dir: 'C:\path\to\workbooks'
+  library:
+    workbooks:
+      dir: 'C:\path\to\workbooks'
     notes:
       dir: 'C:\path\to\notes'
     generation:
@@ -249,7 +276,7 @@ sources:
 `export` は source の設定を使わないため、generator は `--generator` または `generation.default_generator` で決まり、source の補足は使いません。
 `--generator`、`--profile`、`--sheet`、`--reference`、`--reference-file`、`--no-reference` は、`--context` と一緒に指定します。
 
-補足文の合計文字数は、`generation.max_reference_chars`（既定 20000 文字）までです。
+補足文の合計文字数は、`generation.limits.max_reference_chars`（既定 20000 文字）までです。
 1回の生成に渡すすべての補足文の合計に適用します。
 超えた場合は、AI を呼び出す前にエラーになり、補足文を切り詰めません。
 補足ファイルは、空でない UTF-8 のテキストにします。
@@ -264,18 +291,18 @@ BOM 付きでも読み込めます。
 
 ### 画像化と抽出の上限
 
-次の項目は、generator ではなく `generation` の直下に書きます。
+次の項目は、generator ではなく `generation.limits` の下に書きます。
 
-| 設定キー（`generation.` 以下） | 既定値 | 意味・単位 |
+| 設定キー（`generation.limits.` 以下） | 既定値 | 意味・単位 |
 | --- | --- | --- |
-| `profile_dirs` | `[]` | 独自の文章 profile を置いた親フォルダの一覧です。記載順に探します。 |
+| `max_reference_chars` | `20000` | 1回の生成に渡す補足文の合計文字数の上限です。 |
 | `max_images` | `24` | 1シートあたりの画像の枚数の上限です。全体の縮小図を含みます。最大 `100` です。 |
 | `tile_width_points` / `tile_height_points` | `1200` / `800` | 分割した画像1枚が表す範囲の幅・高さです。Excel のポイント単位です。 |
 | `overlap_points` | `80` | 隣り合う画像の重なりです。幅と高さの小さい方の半分未満にします。 |
 | `image_dpi` | `150` | 画像の解像度です。`72`～`300` dpi を指定します。 |
 | `max_cells` / `max_objects` | `10000` / `10000` | 1シートから抽出するセル・オブジェクトの数の上限です。 |
 | `max_input_chars` | `null` | AI に送る抽出の根拠データ（JSON）の文字数の上限です。`null` はこのツールでは制限しません。 |
-| `max_workbook_mb` | `100` | 入力ブックのファイルサイズの上限です。単位は MiB（1024 × 1024 バイト）です。 |
+| `max_workbook_mb` | `100` | 入力ブックのファイルサイズの上限です。単位は MiB（1024 × 1024 バイト）です。シート方式の cover にも適用します。 |
 
 `max_input_chars` 以外の数値は、正の整数で指定します。
 上限を超えた場合は、対象を切り詰めずにエラーとして停止します。
@@ -292,29 +319,14 @@ BOM 付きでも読み込めます。
 | 設定キー（`generation.` 以下） | 既定値 | 意味 |
 | --- | --- | --- |
 | `prompt_profile` | `default-ja` | generator を使わない場合の文章の profile です。英語は `default-en` です。 |
-| `profile_dirs` | `[]` | 独自の profile を置いた親フォルダの一覧です。 |
+| `prompt_profile_dirs` | `[]` | 独自の文章 profile を置いた親フォルダの一覧です。記載順に探します。 |
 
-`profile_dirs` に `C:\path\to\profiles` を指定して `prompt_profile: technical-notes` を選ぶと、`C:\path\to\profiles\technical-notes\` を読み込みます。
+`prompt_profile_dirs` に `C:\path\to\profiles` を指定して `prompt_profile: technical-notes` を選ぶと、`C:\path\to\profiles\technical-notes\` を読み込みます。
 同名のフォルダがなければ、同梱の `default-ja` / `default-en` から探します。
 profile の検証は `--context` を付けた実行で行い、`config list` では行いません。
 profile のファイル構成と作り方は「[独自の文章 profile を作る](../guides/sheet-content.md#独自の文章-profile-を作る)」を参照してください。
 
 ## 設定ファイルの版
 
-`schema_version` は設定ファイルの形式の版で、現在は `"2.2.0"` です。
-
-## プレビュー画像の設定
-
-`thumbnails` は `pull` の cover 用画像だけに適用します。VLM 用の `img/` と独立し、EXIF・ICC・XMPなどのメタデータを除去します。
-
-```yaml
-thumbnails:
-  enabled: true
-  subdir: thumbnails
-  max_edge: 480
-  format: webp
-  quality: 85
-  lossless: false
-```
-
-既定値は `max_edge: null`（従来の寸法を維持）、`lossless: true` です。他の既定値は上記と同じです。`max_edge` は64～4000またはnull、`quality` は1～100、`format` はpng/jpeg/webpを指定できます。`lossless: true` はWebP専用で、PNGは常に可逆圧縮です。`subdir` は `notes.dir` 直下の安全な単一フォルダ名です。`enabled: false` は生成を停止し、既存のcoverを保持します。手動指定のcover・旧画像は変更・削除しません。設定を変えたシート方式は再描画しますが、旧形式の同期済みキャッシュは変換して利用できます。
+`schema_version` は設定ファイルの形式の版で、現在は `"3.0.0"` です。
+省略した場合も `"3.0.0"` として扱います。ほかの版と、このページにないキーはエラーになります。

@@ -93,13 +93,13 @@ contextStatus: current
 | context | AI が生成するシートごとの説明（シート説明）と、ブック全体の説明（ブック要約）です。`--context` を指定したときだけ生成します。 |
 | generator | AI の接続先・文章の profile・補足文の組に名前を付けた設定です。`--generator <id>` で切り替えます。 |
 
-「profile」という語は、選ぶ対象の異なる3つの設定で使われています。
+出力の形を選ぶ設定は、次の3つです。
 
 | 種類 | 設定する場所 | 選ぶもの | その実行だけ変える方法 |
 | --- | --- | --- | --- |
 | 文章の profile | `generation.prompt_profile`、または generator の `prompt_profile` | context の構成と言語（既定 `default-ja`、英語は `default-en`） | `--profile <名前>` |
 | AI 接続 profile | `generation.genai_profile`、または generator の `genai_profile` | AI の接続先・モデル・認証（この CLI の `genai_profiles` に定義） | `--generator <id>` で別の generator を選ぶ |
-| ノートの profile | `sources.<id>.notes.profile` | 代理ノートのテンプレート（既定 `tkn-obsidian-v1`） | なし |
+| ノートのテンプレート | `sources.<id>.notes.template` | 代理ノートの Frontmatter と本文の枠（既定 `tkn-obsidian-v1`） | なし |
 
 ### 1.4. 全体像
 
@@ -166,7 +166,7 @@ AI を使わない場合、この手順は不要です。
 GenAI Bridge の共有設定は読み込みません。
 既定の接続先 `codex-default` は、ログイン済みの Codex CLI を使います。
 `tkn-excel-note config init` で専用設定を作成し、`genai_profiles` のモデルや実行ファイルを設定します。
-既存設定の移行方法は、[設定リファレンス](docs/reference/configuration.md#ai-生成の設定)を参照してください。
+設定項目は、[設定リファレンス](docs/reference/configuration.md#ai-生成の設定)を参照してください。
 GitHub Copilot を使う場合は Copilot CLI 1.0.105 以降が必要です。
 接続先には、画像入力に対応するモデルを指定します。
 
@@ -307,9 +307,9 @@ flowchart LR
     books[("Excel ブック<br/>入力フォルダ・原本")]
     notes[("代理ノート<br/>Frontmatter・本文")]
     state[("同期記録<br/>sync-state.json")]
-    pull["pull --source workbooks<br/>Excel の更新を取り込む"]
+    pull["pull --source library<br/>Excel の更新を取り込む"]
     edit["ノートの Frontmatter を編集"]
-    push["push --source workbooks<br/>Frontmatter の変更を反映"]
+    push["push --source library<br/>Frontmatter の変更を反映"]
 
     config -.->|入力フォルダ・ノート保存先| pull
     config -.->|同期対象| push
@@ -335,15 +335,16 @@ tkn-excel-note config init
 
 作成したファイルの `sources` を、自分の入力フォルダとノート保存先に書き換えます。
 ひな形にはサンプルの source `personal-excel` があります。
-次の例では、source の ID を `workbooks` に変えています。
+次の例では、source の ID を `library` に変えています。
 `sources` 以外の項目はそのまま残します。
 
 ```yaml
 sources:
-  workbooks:
-    workbooks_dir: 'C:\path\to\workbooks'
-    recursive: true
-    include: ['*.xlsx', '*.xlsm']
+  library:
+    workbooks:
+      dir: 'C:\path\to\workbooks'
+      recursive: true
+      include: ['*.xlsx', '*.xlsm']
     notes:
       dir: 'C:\path\to\notes'
       frontmatter_term_format: plain
@@ -351,9 +352,9 @@ sources:
 
 | 設定キー | 意味 |
 | --- | --- |
-| `workbooks_dir` | 入力ブックのフォルダです。 |
-| `recursive` | `true` でサブフォルダも対象にし、フォルダ構成をノート側にも再現します。 |
-| `include` | 対象にするファイルのパターンです。 |
+| `workbooks.dir` | 入力ブックのフォルダです。 |
+| `workbooks.recursive` | `true` でサブフォルダも対象にし、フォルダ構成をノート側にも再現します。 |
+| `workbooks.include` | 対象にするファイルのパターンです。 |
 | `notes.dir` | 代理ノートを保存するフォルダです。Obsidian の Vault 内のフォルダを指定できます。 |
 | `notes.frontmatter_term_format` | `plain` で `keywords` と `categories` を通常の文字列に、既定の `obsidian-link` で `[[...]]` のリンクにします。 |
 
@@ -375,8 +376,8 @@ JSON が必要な場合は `tkn-excel-note config list --json` を使います�
 `--dry-run` で、作成される代理ノートを確認してから実行します。
 
 ```shell
-tkn-excel-note pull --source workbooks --dry-run
-tkn-excel-note pull --source workbooks
+tkn-excel-note pull --source library --dry-run
+tkn-excel-note pull --source library
 ```
 
 `notes.dir` に、ブックごとの代理ノート `<ファイル名>.md` が作成されます。
@@ -396,21 +397,21 @@ AI の説明も生成する場合は、`--context` を付けます。
 送信する情報と呼び出し回数は「[AI による説明を付ける](#32-ai-による説明を付ける)」と同じです。
 
 ```shell
-tkn-excel-note pull --source workbooks --context --dry-run
-tkn-excel-note pull --source workbooks --context
+tkn-excel-note pull --source library --context --dry-run
+tkn-excel-note pull --source library --context
 ```
 
 `pull` は `--source <id>` または `--all-sources` のどちらかを指定します。
 2つは併用できません。
 source 内の1ブックだけを取り込む場合は、ファイル名を指定します。
-相対パスは `workbooks_dir` が基準です。
-`workbooks_dir` 配下の絶対パスも使えます。
-ファイルを指定した場合も、`recursive`・`include`・`ignore` の設定を適用します。
+相対パスは `workbooks.dir` が基準です。
+`workbooks.dir` 配下の絶対パスも使えます。
+ファイルを指定した場合も、`workbooks` の `recursive`・`include`・`ignore` の設定を適用します。
 ファイルの指定は `--all-sources` と併用できません。
 
 ```shell
-tkn-excel-note pull --source workbooks "example.xlsx" --dry-run
-tkn-excel-note pull --source workbooks "example.xlsx" --sheet "概要" --context
+tkn-excel-note pull --source library "example.xlsx" --dry-run
+tkn-excel-note pull --source library "example.xlsx" --sheet "概要" --context
 ```
 
 登録済みのすべての source をまとめて取り込む場合は、次のように実行します。
@@ -427,7 +428,7 @@ tkn-excel-note pull --all-sources --context
 Excel を保存した後、同じ `pull` を実行します。
 
 ```shell
-tkn-excel-note pull --source workbooks --context
+tkn-excel-note pull --source library --context
 ```
 
 `--context` を付けた `pull` は、変更のないシートの説明を再利用し、変更されたシートだけを AI で解析し直します。
@@ -464,8 +465,8 @@ tkn-excel-note pull --source workbooks --context
 | `comments` | コメント |
 
 ```shell
-tkn-excel-note push --source workbooks --dry-run
-tkn-excel-note push --source workbooks
+tkn-excel-note push --source library --dry-run
+tkn-excel-note push --source library
 ```
 
 特定のノートだけを反映する場合は、`--note "book.xlsx.md"` のようにノート名を指定します。
@@ -483,7 +484,7 @@ Excel とノートで同じ項目を別々の値に変えていた場合、そ�
 Obsidian Bases のカードビューで、この画像をサムネイルとして表示できます。
 
 cover 用の画像は既定で `notes.dir/thumbnails/` に WebP（可逆圧縮）で保存します。
-`thumbnails` 設定でサイズ・形式・品質・可逆圧縮を変更できます（[設定リファレンス](docs/reference/configuration.md#プレビュー画像の設定)）。
+`cover.image` の設定でサイズ・形式・品質・可逆圧縮を変更できます（[設定リファレンス](docs/reference/configuration.md#画像ファイルの形式)）。
 既存の自動管理の cover は次回の `pull` で更新し、旧画像と手動指定の cover は保持します。
 
 既定では、Excel が保存時に埋め込んだサムネイル画像を使います。
@@ -491,7 +492,7 @@ cover 用の画像は既定で `notes.dir/thumbnails/` に WebP（可逆圧縮�
 この画像化は Excel を使いますが、AI は使いません。
 
 ```shell
-tkn-excel-note pull --source workbooks --cover sheet --cover-range "A1:Q50"
+tkn-excel-note pull --source library --cover sheet --cover-range "A1:Q50"
 ```
 
 一度成功した条件はブックごとに記録され、次回からはオプションを省略しても同じ条件で更新します。
@@ -549,9 +550,9 @@ Windows パスは省略や二重エスケープをせずに表示し、制御文
 端末・パイプ・リダイレクトのどれに出力しても、結果の形式は変わりません。
 
 ```shell
-tkn-excel-note pull --source workbooks --dry-run
-tkn-excel-note --json pull --source workbooks --dry-run
-tkn-excel-note pull --source workbooks --dry-run --full-output --json
+tkn-excel-note pull --source library --dry-run
+tkn-excel-note --json pull --source library --dry-run
+tkn-excel-note pull --source library --dry-run --full-output --json
 ```
 
 `.xls` を変換する PowerShell スクリプト（「[旧 `.xls` を変換する](docs/guides/catalog-operations.md#旧-xls-を変換する)」）では、同じ切り替えに `-Json` / `-FullOutput` / `-Quiet` を使います。

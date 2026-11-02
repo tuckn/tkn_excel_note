@@ -239,7 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
     pull.add_argument(
         "workbook",
         nargs="?",
-        help="Limit pull to one workbook inside --source; path relative to workbooks_dir or absolute.",
+        help="Limit pull to one workbook inside --source; path relative to workbooks.dir or absolute.",
     )
     pull.add_argument(
         "--cover",
@@ -271,7 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=_context_profile_name,
         help=(
             "Context profile defining structure and language "
-            "(built-in or generation.profile_dirs); default: configured profile or default-ja."
+            "(built-in or generation.prompt_profile_dirs); default: configured profile or default-ja."
         ),
     )
     pull.add_argument(
@@ -429,21 +429,22 @@ def _log_source_configuration(logger: logging.Logger, sources: tuple[SourceConfi
         lines.extend(
             [
                 f"  {json.dumps(source.id, ensure_ascii=False)}:",
-                f"    workbooks_dir: {_yaml_single_quoted(str(source.path))}",
-                f"    recursive: {str(source.recursive).lower()}",
-                "    include:",
-                *(f"      - {json.dumps(pattern)}" for pattern in source.include),
+                "    workbooks:",
+                f"      dir: {_yaml_single_quoted(str(source.path))}",
+                f"      recursive: {str(source.recursive).lower()}",
+                "      include:",
+                *(f"        - {json.dumps(pattern)}" for pattern in source.include),
                 *(
                     [
-                        "    ignore:",
-                        *(f"      - {json.dumps(pattern)}" for pattern in source.ignore),
+                        "      ignore:",
+                        *(f"        - {json.dumps(pattern)}" for pattern in source.ignore),
                     ]
                     if source.ignore
-                    else ["    ignore: []"]
+                    else ["      ignore: []"]
                 ),
                 "    notes:",
                 f"      dir: {_yaml_single_quoted(str(source.note_root))}",
-                f"      profile: {source.profile}",
+                f"      template: {source.template}",
                 f"      frontmatter_term_format: {source.frontmatter_term_format}",
                 f"      rename_adapter: {source.rename_adapter}",
             ]

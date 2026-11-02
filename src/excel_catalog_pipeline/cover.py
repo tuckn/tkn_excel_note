@@ -103,7 +103,7 @@ def plan_cover(
         settings = validate_cover(merged)
         address, width = settings.range or "A1:Q50", settings.width or 2400
         if workbook.path.stat().st_size > max_workbook_mb * 1024 * 1024:
-            raise CoverError("Workbook exceeds generation.max_workbook_mb")
+            raise CoverError("Workbook exceeds generation.limits.max_workbook_mb")
         data = read_shared(workbook.path)
         sheet = select_sheet(data, settings.sheet)
         details.update(sheet=sheet["name"], range=address, width=width)

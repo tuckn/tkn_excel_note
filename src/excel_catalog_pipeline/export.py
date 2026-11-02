@@ -293,7 +293,7 @@ def run_export(
         try:
             previous = _guard_output(target, force)
             if book.stat().st_size > config.context.max_workbook_mb * 1024 * 1024:
-                raise ContextError("Workbook exceeds generation.max_workbook_mb")
+                raise ContextError("Workbook exceeds generation.limits.max_workbook_mb")
             data = read_shared(book)
             source = SourceConfig(
                 "export", book.parent, ("*.xlsx", "*.xlsm"), target.parent, single_workbook=book

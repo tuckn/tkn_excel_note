@@ -61,7 +61,7 @@ def resolve_workbook(source: SourceConfig, selector: str, config: ContextConfig)
     if path.suffix.lower() not in {".xlsx", ".xlsm"} or not path.is_file():
         raise ContextError("Select an existing .xlsx or .xlsm workbook")
     if path.stat().st_size > config.max_workbook_mb * 1024 * 1024:
-        raise ContextError("Workbook exceeds generation.max_workbook_mb")
+        raise ContextError("Workbook exceeds generation.limits.max_workbook_mb")
     return path
 
 

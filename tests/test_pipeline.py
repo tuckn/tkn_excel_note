@@ -15,23 +15,19 @@ from .helpers import create_workbook
 def app_config(tmp_path: Path, *, recursive: bool = False, ignore: list[str] | None = None):  # type: ignore[no-untyped-def]
     return validate_config(
         {
-            "schema_version": 1,
+            "schema_version": "3.0.0",
             "sources": {
                 "example": {
-                    "path": str(tmp_path / "workbooks"),
-                    "recursive": recursive,
-                    "include": ["*.xlsx", "*.xlsm"],
-                    "ignore": ignore or [],
-                    "notes": {"root": str(tmp_path / "notes"), "rename_adapter": "filesystem"},
+                    "workbooks": {
+                        "dir": str(tmp_path / "workbooks"),
+                        "recursive": recursive,
+                        "include": ["*.xlsx", "*.xlsm"],
+                        "ignore": ignore or [],
+                    },
+                    "notes": {"dir": str(tmp_path / "notes"), "rename_adapter": "filesystem"},
                 }
             },
-            "sync": {
-                "pull_preserves_user_metadata": True,
-                "delete_missing_notes": False,
-                "delete_missing_workbooks": False,
-                "allow_source_rename": False,
-                "max_extracted_text_chars": 12000,
-            },
+            "sync": {"max_extracted_text_chars": 12000},
         }
     )
 

@@ -45,7 +45,7 @@ def test_inline_plan_never_reads_bridge_config(isolated, monkeypatch, provider):
     monkeypatch.setattr(bridge_config, "load_profile", unexpected)
     monkeypatch.setattr(Runtime, "generate", unexpected)
     path = write(isolated / ".tkn/config.yaml", {
-        "schema_version": "2.2.0",
+        "schema_version": "3.0.0",
         "genai_profiles": {"custom": {"provider": provider, "model": "example-model"}},
         "generation": {"genai_profile": "custom", "overrides": {"timeout_seconds": 45}},
     })
@@ -121,22 +121,21 @@ def test_invalid_lower_layer_cannot_be_hidden(isolated):
         load_config(explicit=explicit)
 
 
-def test_legacy_selection_alias_and_conflicts(isolated):
+def test_generator_selects_genai_profile_and_rejects_unknown_keys(isolated):
     write(isolated / "user.yaml", {
-        "schema_version": "2.1.0",
+        "schema_version": "3.0.0",
         "generation": {"default_generator": "example", "generators": {
-            "example": {"bridge_profile": "claude-default"}
+            "example": {"genai_profile": "claude-default"}
         }},
     })
     config = load_config()
     assert resolve_profile(resolve_generation(config)).provider == "claude-code"
     serialized = config_as_dict(config)
     assert serialized["generation"]["generators"]["example"]["genai_profile"] == "claude-default"
-    assert "bridge_profile" not in serialized["generation"]["generators"]["example"]
-    explicit = write(isolated / "explicit.yaml", {"generation": {
-        "bridge_profile": "codex-default", "genai_profile": "claude-default"
-    }})
-    with pytest.raises(ConfigError, match="Do not mix"):
+    explicit = write(isolated / "explicit.yaml", {"generation": {"generators": {
+        "example": {"bridge_profile": "codex-default"}
+    }}})
+    with pytest.raises(ConfigError, match="Unknown generation.generators.example key"):
         load_config(explicit=explicit)
 
 

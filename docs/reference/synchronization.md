@@ -98,8 +98,8 @@ sequenceDiagram
 > `--dry-run` で対象と差分を確認してから実行してください。
 
 ```shell
-tkn-excel-note -v pull --source workbooks --prefer-source --dry-run
-tkn-excel-note pull --source workbooks --prefer-source
+tkn-excel-note -v pull --source library --prefer-source --dry-run
+tkn-excel-note pull --source library --prefer-source
 ```
 
 `--prefer-source` を付けない通常の `pull` は、ノートだけで編集した項目を保持します。
@@ -115,8 +115,8 @@ ID があると、ブックを移動・名前変更しても同じブックと�
 `adopt` はブックをバックアップしてから書き換えます。
 
 ```shell
-tkn-excel-note adopt --source workbooks --dry-run
-tkn-excel-note adopt --source workbooks
+tkn-excel-note adopt --source library --dry-run
+tkn-excel-note adopt --source library
 ```
 
 ### パスを変更する
@@ -246,7 +246,7 @@ tkn-excel-note adopt --source workbooks
 
 | 保存場所 | 内容 | 失った場合の影響 |
 | --- | --- | --- |
-| `sources.<id>.workbooks_dir` | 元の Excel ブック | 代理ノートからは元の内容を復元できません。 |
+| `sources.<id>.workbooks.dir` | 元の Excel ブック | 代理ノートからは元の内容を復元できません。 |
 | `sources.<id>.notes.dir` | 代理ノートと、説明の画像 | 手書きの本文と生成済みの説明を失います。 |
 | `~/.tkn/excel_note/config.yaml` | 設定ファイル | 入力フォルダと保存先を設定し直す必要があります。 |
 | `~/.tkn/excel_note/state/sync-state.json` | ブックとノートの対応、前回一致した値 | 既存の差分が競合として扱われることがあります。手で編集しないでください。 |

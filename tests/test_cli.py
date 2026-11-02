@@ -34,10 +34,11 @@ def test_workbook_list_sheets_reads_saved_names_without_creating_notes(
     original_bytes = workbook.read_bytes()
     config = tmp_path / "config.yaml"
     config.write_text(
-        f'''schema_version: "1.1.0"
+        f'''schema_version: "3.0.0"
 sources:
   example:
-    workbooks_dir: "{workbooks.as_posix()}"
+    workbooks:
+      dir: "{workbooks.as_posix()}"
     notes:
       dir: "{notes.as_posix()}"
 ''',
@@ -124,7 +125,7 @@ def test_mutating_command_help_explains_normal_write_and_dry_run(capsys) -> None
 
 def test_config_list_prints_compact_json_without_header(monkeypatch, tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "config.yaml"
-    config.write_text("schema_version: 1\nsources: {}\n", encoding="utf-8")
+    config.write_text('schema_version: "3.0.0"\nsources: {}\n', encoding="utf-8")
     result = main(["--json", "--config", "config.yaml", "config", "list", "--json"])
     captured = capsys.readouterr()
     assert result == 0
@@ -165,13 +166,14 @@ def test_cli_pull_source_writes_note_state_and_report(
     create_workbook(workbooks / "book.xlsx")
     config = tmp_path / "config.yaml"
     config.write_text(
-        f'''schema_version: 1
+        f'''schema_version: "3.0.0"
 sources:
   example:
-    path: "{workbooks.as_posix()}"
-    include: ["**/*.xlsx"]
+    workbooks:
+      dir: "{workbooks.as_posix()}"
+      include: ["**/*.xlsx"]
     notes:
-      root: "{notes.as_posix()}"
+      dir: "{notes.as_posix()}"
 ''',
         encoding="utf-8",
     )
@@ -211,13 +213,14 @@ def test_cli_pull_dry_run_changes_no_persistent_files(monkeypatch, tmp_path: Pat
     create_workbook(workbooks / "book.xlsx")
     config = tmp_path / "config.yaml"
     config.write_text(
-        f'''schema_version: 1
+        f'''schema_version: "3.0.0"
 sources:
   example:
-    path: "{workbooks.as_posix()}"
-    include: ["**/*.xlsx"]
+    workbooks:
+      dir: "{workbooks.as_posix()}"
+      include: ["**/*.xlsx"]
     notes:
-      root: "{notes.as_posix()}"
+      dir: "{notes.as_posix()}"
 ''',
         encoding="utf-8",
     )
@@ -260,13 +263,14 @@ def test_cli_status_logs_grouped_counts_and_attention_items(
     notes = tmp_path / "notes"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f'''schema_version: 1
+        f'''schema_version: "3.0.0"
 sources:
   example:
-    path: "{workbooks.as_posix()}"
-    include: ["**/*.xlsx"]
+    workbooks:
+      dir: "{workbooks.as_posix()}"
+      include: ["**/*.xlsx"]
     notes:
-      root: "{notes.as_posix()}"
+      dir: "{notes.as_posix()}"
 ''',
         encoding="utf-8",
     )
@@ -337,13 +341,14 @@ def test_cli_push_logs_non_unchanged_files_and_readable_summary(
     notes = tmp_path / "notes"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f'''schema_version: 1
+        f'''schema_version: "3.0.0"
 sources:
   example:
-    path: "{workbooks.as_posix()}"
-    include: ["**/*.xlsx"]
+    workbooks:
+      dir: "{workbooks.as_posix()}"
+      include: ["**/*.xlsx"]
     notes:
-      root: "{notes.as_posix()}"
+      dir: "{notes.as_posix()}"
 ''',
         encoding="utf-8",
     )
@@ -396,12 +401,13 @@ sources:
     assert isinstance(json.loads(captured.out), dict)
     assert "[INFO] Running push for 1 source(s): example." in captured.err
     assert '[INFO] Selected source configuration:\n  "example":' in captured.err
-    assert f"    workbooks_dir: '{workbooks.resolve()}'" in captured.err
-    assert "    recursive: false" in captured.err
-    assert '      - "**/*.xlsx"' in captured.err
-    assert "    ignore: []" in captured.err
-    assert f"      dir: '{notes.resolve()}'" in captured.err
-    assert "      profile: tkn-obsidian-v1" in captured.err
+    assert f"    workbooks:\n      dir: '{workbooks.resolve()}'" in captured.err
+    assert "      recursive: false" in captured.err
+    assert '        - "**/*.xlsx"' in captured.err
+    assert "      ignore: []" in captured.err
+    assert f"    notes:\n      dir: '{notes.resolve()}'" in captured.err
+    assert "      template: tkn-obsidian-v1" in captured.err
+    assert "profile:" not in captured.err
     assert "      frontmatter_term_format: obsidian-link" in captured.err
     assert "      rename_adapter: report-only" in captured.err
     assert "[SUCCESS] [written] fileName=one.xlsx | sourcePath=one.xlsx | message=-" in captured.err
@@ -434,13 +440,14 @@ def test_cli_pull_verbose_dry_run_logs_values_without_report(
 ) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "config.yaml"
     config.write_text(
-        f'''schema_version: 1
+        f'''schema_version: "3.0.0"
 sources:
   example:
-    path: "{(tmp_path / "workbooks").as_posix()}"
-    include: ["**/*.xlsx"]
+    workbooks:
+      dir: "{(tmp_path / "workbooks").as_posix()}"
+      include: ["**/*.xlsx"]
     notes:
-      root: "{(tmp_path / "notes").as_posix()}"
+      dir: "{(tmp_path / "notes").as_posix()}"
 ''',
         encoding="utf-8",
     )
@@ -512,9 +519,9 @@ def test_legacy_write_option_is_accepted_with_deprecation_warning(
 ) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "config.yaml"
     config.write_text(
-        "schema_version: 1\nsources:\n"
-        f"  example:\n    path: '{tmp_path.as_posix()}'\n"
-        f"    notes:\n      root: '{(tmp_path / 'notes').as_posix()}'\n",
+        'schema_version: "3.0.0"\nsources:\n'
+        f"  example:\n    workbooks:\n      dir: '{tmp_path.as_posix()}'\n"
+        f"    notes:\n      dir: '{(tmp_path / 'notes').as_posix()}'\n",
         encoding="utf-8",
     )
 
@@ -546,9 +553,9 @@ def test_cli_push_dry_run_validates_allowed_rename_without_report(
 ) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "config.yaml"
     config.write_text(
-        "schema_version: 1\nsources:\n"
-        f"  example:\n    path: '{tmp_path.as_posix()}'\n"
-        f"    notes:\n      root: '{(tmp_path / 'notes').as_posix()}'\n",
+        'schema_version: "3.0.0"\nsources:\n'
+        f"  example:\n    workbooks:\n      dir: '{tmp_path.as_posix()}'\n"
+        f"    notes:\n      dir: '{(tmp_path / 'notes').as_posix()}'\n",
         encoding="utf-8",
     )
 
@@ -591,9 +598,9 @@ def test_cli_adopt_dry_run_lists_targets_without_report(
 ) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "config.yaml"
     config.write_text(
-        "schema_version: 1\nsources:\n"
-        f"  example:\n    path: '{tmp_path.as_posix()}'\n"
-        f"    notes:\n      root: '{(tmp_path / 'notes').as_posix()}'\n",
+        'schema_version: "3.0.0"\nsources:\n'
+        f"  example:\n    workbooks:\n      dir: '{tmp_path.as_posix()}'\n"
+        f"    notes:\n      dir: '{(tmp_path / 'notes').as_posix()}'\n",
         encoding="utf-8",
     )
 
@@ -629,7 +636,7 @@ def test_config_list_uses_source_keys(monkeypatch, tmp_path: Path, capsys) -> No
     monkeypatch.setattr(config_module, "global_config_path", lambda: tmp_path / "absent")
     config = tmp_path / "config.yaml"
     config.write_text(
-        "sources:\n  example:\n    id:\n    path: input\n    notes: {root: output}\n",
+        "sources:\n  example:\n    workbooks: {dir: input}\n    notes: {dir: output}\n",
         encoding="utf-8",
     )
     assert main(["--json", "--config", str(config), "config", "list", "--json"]) == 0
@@ -637,8 +644,9 @@ def test_config_list_uses_source_keys(monkeypatch, tmp_path: Path, capsys) -> No
     payload = json.loads(captured.out)
     assert list(payload["config"]["sources"]) == ["example"]
     assert "id" not in payload["config"]["sources"]["example"]
-    assert "workbooks_dir" in payload["config"]["sources"]["example"]
+    assert payload["config"]["sources"]["example"]["workbooks"]["dir"] == str(tmp_path / "input")
     assert "path" not in payload["config"]["sources"]["example"]
+    assert "workbooks_dir" not in payload["config"]["sources"]["example"]
     assert "dir" in payload["config"]["sources"]["example"]["notes"]
     assert "[INFO] Showing resolved configuration" in captured.err
 
@@ -696,8 +704,8 @@ def test_pull_selects_only_explicit_targets(
             **DEFAULT_CONFIG,
             "sources": {
                 name: {
-                    "path": str(tmp_path / name),
-                    "notes": {"root": str(tmp_path / (name + "-notes"))},
+                    "workbooks": {"dir": str(tmp_path / name)},
+                    "notes": {"dir": str(tmp_path / (name + "-notes"))},
                 }
                 for name in ("one", "two")
             },
@@ -745,7 +753,7 @@ def test_pull_all_sources_processes_multiple_workbooks(monkeypatch, tmp_path, ca
             **DEFAULT_CONFIG,
             "sources": {
                 name: {
-                    "workbooks_dir": str(book.parent),
+                    "workbooks": {"dir": str(book.parent)},
                     "notes": {"dir": str(tmp_path / (name + "-notes"))},
                 }
                 for name, book in workbooks.items()
@@ -817,8 +825,7 @@ def test_pull_one_workbook_preserves_other_notes_and_state(
             **DEFAULT_CONFIG,
             "sources": {
                 "library": {
-                    "workbooks_dir": str(root),
-                    "recursive": True,
+                    "workbooks": {"dir": str(root), "recursive": True},
                     "notes": {"dir": str(notes)},
                 }
             },
@@ -892,9 +899,8 @@ def test_pull_workbook_validates_scope_before_execution(
             **DEFAULT_CONFIG,
             "sources": {
                 "library": {
-                    "workbooks_dir": str(root),
+                    "workbooks": {"dir": str(root), **settings},
                     "notes": {"dir": str(tmp_path / "notes")},
-                    **settings,
                 }
             },
         }
