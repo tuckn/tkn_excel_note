@@ -15,6 +15,7 @@ import excel_catalog_pipeline.paths as paths
 from excel_catalog_pipeline.adapters.markdown import discover_notes, read_note
 from excel_catalog_pipeline.context_profiles import load_context_profile, render_context
 from excel_catalog_pipeline.models import AppConfig, SourceConfig, SyncConfig
+from excel_catalog_pipeline.note_frontmatter import NoteLoader
 from tests.helpers import create_workbook
 from tests.test_context import rewrite_package
 
@@ -109,6 +110,8 @@ def test_export_frontmatter_quotes_dates_versions_and_path(environment, created,
     assert re.search(r'^generatedAt: "\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00"$', header, re.M)
     assert "sourceFullPath: '" + path.replace("'", "''") + "'" in lines
     assert 'subject: ""' in lines
+    # Hashes are quoted by key, even when the value would read as a string anyway.
+    assert re.search(r'^sourceSnapshotSha256: "[0-9a-f]{64}"$', header, re.M)
     # A YAML 1.1 loader with timestamp resolution must still read plain strings.
     loaded = yaml.safe_load(header)
     assert loaded["schemaVersion"] == "1.0" and loaded["sourceFullPath"] == path
@@ -116,12 +119,30 @@ def test_export_frontmatter_quotes_dates_versions_and_path(environment, created,
     assert isinstance(loaded["generatedAt"], str) and loaded["subject"] == ""
 
 
-def test_context_export_quotes_added_timestamps(environment):
+@pytest.mark.parametrize("title", ["yes", "y", "1.0", "1e3", "00123", "2026-10-11", "[x]", "a: b"])
+def test_export_double_quotes_strings_that_need_quotes(environment, title):
+    _, book, _ = environment
+    book = create_workbook(book, title=title, subject="Weekly review")
+    assert cli.main(["--json", "export", str(book)]) == 0
+    header = _header(book.with_name(book.name + ".md"))
+    lines = header.splitlines()
+    assert f'title: "{title}"' in lines and "subject: Weekly review" in lines
+    # Single quotes stay reserved for the Windows path.
+    assert [line for line in lines if ": '" in line] == [
+        line for line in lines if line.startswith("sourceFullPath: ")
+    ]
+    for loader in (yaml.SafeLoader, NoteLoader):
+        assert yaml.load(header, Loader=loader)["title"] == title
+
+
+def test_context_export_quotes_added_timestamps_and_fingerprint(environment):
     _, book, _ = environment
     assert cli.main(["--json", "export", str(book), "--context"]) == 0
     header = _header(book.with_name(book.name + ".md"))
     for key in ("generatedAt", "updated", "contextGeneratedAt"):
         assert re.search(rf'^{key}: "[^"]+\+00:00"$', header, re.M), key
+    for key in ("sourceSnapshotSha256", "contextSourceFingerprint"):
+        assert re.search(rf'^{key}: "[0-9a-f]{{64}}"$', header, re.M), key
     assert 'schemaVersion: "1.0"' in header.splitlines()
     assert re.search(r"^sourceFullPath: '[^']+'$", header, re.M)
     loaded = yaml.safe_load(header)

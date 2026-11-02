@@ -38,8 +38,11 @@ GROUPS = (
     ),
 )
 TIMESTAMPS = ("created", "updated", "sourceCreated", "sourceModified", "contextGeneratedAt")
-# `type` stays plain (`type: Excel`); the other head values and timestamps are double-quoted.
-QUOTED = (*(key for key in HEAD if key != "type"), *TIMESTAMPS)
+# Hashes are quoted for every value, not only when a value looks like a number.
+HASHES = ("contextSourceFingerprint",)
+# `type` stays plain (`type: Excel`); the other head values, timestamps and hashes are
+# double-quoted.
+QUOTED = (*(key for key in HEAD if key != "type"), *TIMESTAMPS, *HASHES)
 LISTS = (
     "keywords",
     "categories",
@@ -81,7 +84,13 @@ NoteLoader.yaml_implicit_resolvers = {
 
 
 class NoteDumper(SourcePathDumper):
-    """Quote timestamps, empty strings and Obsidian links consistently."""
+    """Quote strings as the shared YAML style guide does.
+
+    The `quoted` keys, empty strings and Obsidian links are always double-quoted.
+    Other strings stay plain unless a reader could take them as another type or as
+    YAML syntax; those are double-quoted, or single-quoted when they contain a
+    backslash, as `sourceFullPath` always is.
+    """
 
     quoted: tuple[str, ...] = QUOTED
 
@@ -94,6 +103,42 @@ class NoteDumper(SourcePathDumper):
                 value.style = '"'
         return node
 
+    def choose_scalar_style(self) -> str:
+        style: str = super().choose_scalar_style()
+        event = self.event
+        # PyYAML falls back to single quotes. Keep them only where a backslash must stay
+        # literal; an explicitly requested style is never changed.
+        if (
+            style == "'"
+            and isinstance(event, yaml.ScalarEvent)
+            and not event.style
+            and "\\" not in event.value
+        ):
+            return '"'
+        return style
+
+
+# PyYAML resolves YAML 1.1 types, including timestamps. Also quote plain values that
+# the YAML 1.1 spec or the YAML 1.2 Core Schema reads as a boolean or a number but
+# PyYAML does not, such as `y`, `0089`, `0o17` and `1e3`.
+MISREAD = (
+    ("tag:yaml.org,2002:bool", r"[yYnN]", "yYnN"),
+    ("tag:yaml.org,2002:int", r"[-+]?[0-9]+|0o[0-7]+", "-+0123456789"),
+    (
+        "tag:yaml.org,2002:float",
+        r"[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?",
+        "-+.0123456789",
+    ),
+)
+NoteDumper.yaml_implicit_resolvers = {
+    key: list(values) for key, values in NoteDumper.yaml_implicit_resolvers.items()
+}
+for _tag, _pattern, _first in MISREAD:
+    for _char in _first:
+        NoteDumper.yaml_implicit_resolvers.setdefault(_char, []).append(
+            (_tag, re.compile(rf"^(?:{_pattern})$"))
+        )
+
 
 def _string(dumper: NoteDumper, value: str) -> yaml.ScalarNode:
     style = '"' if not value or value.startswith("[[") and value.endswith("]]") else None
@@ -104,9 +149,9 @@ NoteDumper.add_representer(str, _string)
 
 
 class ExportDumper(NoteDumper):
-    """Proxy-note quoting for export Frontmatter: titles stay plain, values unchanged."""
+    """Proxy-note quoting for export Frontmatter: titles quoted only when needed."""
 
-    quoted = ("schemaVersion", "generatedAt", *TIMESTAMPS)
+    quoted = ("schemaVersion", "generatedAt", "sourceSnapshotSha256", *TIMESTAMPS, *HASHES)
 
 
 def now_iso() -> str:

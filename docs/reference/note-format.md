@@ -68,7 +68,9 @@ UTCなどは同じ瞬間の日本時間に変換し、小数秒は省略しま�
 タイムゾーンがない日時、不正な日時、値の異なる `date` と `created` の併存はエラーにし、推測で補完しません。
 空文字列は `""`、空配列は `[]` です。
 `type` は引用符なしの `type: Excel` と書きます。
-`type` 以外の先頭4項目・日時・Obsidianリンクはダブルクォートで囲み、`sourceFullPath` はシングルクォートで囲みます。
+`type` 以外の先頭4項目・日時・ハッシュ値（`contextSourceFingerprint`）・Obsidianリンクは、値によらずダブルクォートで囲みます。`sourceFullPath` はシングルクォートで囲みます。
+その他の文字列は引用符なしで書き、`yes`・`1.0`・`1e3`・`2026-10-11`・`[x]` のように、YAML 1.1 または 1.2 で真偽値・数値・日付・YAMLの構文として読まれる値だけをダブルクォートで囲みます。
+引用符が必要な値のうち、バックスラッシュを含むものは、エスケープとして解釈されないようシングルクォートで囲みます。
 `description` はノートの概要、`comments` はExcelの文書プロパティであり、別々に保持します。
 `keywords` と `categories` は、`sources.<id>.notes.frontmatter_term_format` が `obsidian-link` なら `[[...]]` 形式のリンク、`plain` なら通常の文字列の一覧です。
 `files` 項目は同期に使いません。
@@ -128,7 +130,7 @@ sourceFileName: example.xlsx
 sourceFullPath: 'C:\path\to\example.xlsx'
 sourceCreated: "2025-12-01T00:00:00Z"
 sourceModified: "2026-09-30T18:20:00+09:00"
-sourceSnapshotSha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+sourceSnapshotSha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 generatedAt: "2026-10-01T03:00:00.123456+00:00"
 generationMethod: text
 contextStatus: not-generated
@@ -138,10 +140,10 @@ unsupportedSheets: []
 ---
 ```
 
-日時（`sourceCreated`、`sourceModified`、`generatedAt`、`--context` で追加する `updated`・`contextGeneratedAt`）と `schemaVersion` はダブルクォート、`sourceFullPath` はシングルクォートで囲みます。
+日時（`sourceCreated`、`sourceModified`、`generatedAt`、`--context` で追加する `updated`・`contextGeneratedAt`）、`schemaVersion`、ハッシュ値（`sourceSnapshotSha256`、`--context` で追加する `contextSourceFingerprint`）はダブルクォート、`sourceFullPath` はシングルクォートで囲みます。
 `sourceCreated` / `sourceModified` は Excel の文書プロパティの値をそのまま記録し、代理ノートと異なり日本時間・秒単位へ変換しません。
 `generatedAt` などツールが記録する日時は、UTC・マイクロ秒付きです。
-空文字列は `""`、空配列は `[]` です。`type`・`title` などその他の文字列は、必要な場合だけ引用符を付けます。
+空文字列は `""`、空配列は `[]` です。`type`・`title` などその他の文字列は、代理ノートと同じく引用符が必要な値だけをダブルクォート（バックスラッシュを含む値はシングルクォート）で囲みます。
 
 ## 本文の構成
 

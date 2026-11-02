@@ -5,6 +5,7 @@
 - 代理ノートの `type` を、固有名詞の表記どおり引用符なしの `Excel` に変更し、`schemaVersion` を `"4.0.0"` に更新（非互換変更）。読み取りでは以前の `excel` も代理ノートとして認識し、独自の note profile の `type: excel` もそのまま使用可能。`type: excel` で絞り込む外部スクリプトや Bases は `type: Excel` に更新し、既存ノートは `python -m excel_catalog_pipeline.note_migration` で移行してください。
 - `pull --context` / `export --context` の Frontmatter に `contextProfiles` を追加。ノート内のシート説明・ブック要約に使った文章の profile 名を、重複なしの一覧で記録。
 - `export` の Frontmatter の引用符を共通のYAML記述規約に統一。日時（`sourceCreated`・`sourceModified`・`generatedAt`、`--context` 時の `updated`・`contextGeneratedAt`）と `schemaVersion` をダブルクォート、空文字列を `""` で出力し、`sourceFullPath` はシングルクォートを維持。項目・値（小数秒・タイムゾーン）と書き出しの `schemaVersion: "1.0"` は変更なし。既存の書き出しを `--force` で再作成すると、引用符だけの差分が出ます。これまで引用符なしだった日時を YAML 1.1 のローダーで日時型として読み込んでいた外部スクリプトは、文字列として受け取るよう更新してください。
+- 代理ノートと `export` の Frontmatter で、ハッシュ値（`export` の `sourceSnapshotSha256`、`pull --context` / `export --context` の `contextSourceFingerprint`）を常にダブルクォートで出力。`yes`・`1.0`・`[x]` などのシングルクォートをダブルクォートに変更し、YAML 1.1 または 1.2 で真偽値・数値・日付として読まれるのにこれまで引用符なしだった `y`・`1e3`・`0o17`・日付の形の文字列（シート名・独自項目など）もダブルクォートで囲む。バックスラッシュを含む値と `sourceFullPath` はシングルクォートを維持し、値は変更なし。代理ノートは `schemaVersion: "4.0.0"` のまま、`python -m excel_catalog_pipeline.note_migration` で既存ノートの引用符だけを更新可能。書き出しは `--force` で再作成すると、引用符だけの差分が出ます。
 
 ## 5.1.0 - 2026-11-01
 

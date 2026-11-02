@@ -134,6 +134,76 @@ def test_ai_patch_uses_same_order_and_preserves_body():
     assert normalize_note(result) == result
 
 
+FINGERPRINT = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+
+def test_hash_items_are_always_double_quoted():
+    result = normalize_note(
+        LEGACY.replace(
+            "contextStatus: not-generated",
+            f"contextStatus: current\ncontextSourceFingerprint: {FINGERPRINT}",
+        )
+    )
+    assert f'contextSourceFingerprint: "{FINGERPRINT}"' in result.splitlines()
+    patched = patch_frontmatter(result, {"contextSourceFingerprint": "a1b2c3d"})
+    assert 'contextSourceFingerprint: "a1b2c3d"' in patched.splitlines()
+    assert values(patched)["contextSourceFingerprint"] == "a1b2c3d"
+    assert normalize_note(patched) == patched
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["yes", "y", "Off", "null", "1.0", "1e3", "0o17", "00123", "2026-10-11", "[x]", "a: b", " x"],
+)
+def test_strings_that_need_quotes_are_double_quoted_and_round_trip(value):
+    quoted = json.dumps(value)
+    result = normalize_note(
+        LEGACY.replace(
+            "custom: [keep, these]", f"custom: {quoted}\nsubject: {quoted}\ntags: [{quoted}]"
+        )
+    )
+    lines = result.splitlines()
+    assert {f"custom: {quoted}", f"subject: {quoted}", f"- {quoted}"} <= set(lines)
+    for loader in (yaml.SafeLoader, NoteLoader):
+        loaded = yaml.load(FENCE.match(result)["yaml"], Loader=loader)
+        assert loaded["custom"] == loaded["subject"] == value and loaded["tags"] == [value]
+    assert normalize_note(result) == result
+
+
+def test_single_quotes_stay_only_for_backslash_values():
+    result = normalize_note(
+        LEGACY.replace("custom: [keep, these]", "custom: '[\\d+]'\nplain: 'Weekly review'")
+    )
+    lines = result.splitlines()
+    assert "custom: '[\\d+]'" in lines and "plain: Weekly review" in lines
+    assert "sourceFullPath: 'C:\\path\\to\\book.xlsx'" in lines
+    assert values(result)["custom"] == "[\\d+]"
+    assert normalize_note(result) == result
+
+
+def test_migration_updates_quoting_of_earlier_notes_and_reruns_cleanly(tmp_path):
+    current = normalize_note(
+        LEGACY.replace(
+            "contextStatus: not-generated",
+            f"contextStatus: current\ncontextSourceFingerprint: {FINGERPRINT}\nsheet: 'yes'",
+        )
+    )
+    # Notes written before hashes were quoted and before double quotes replaced single.
+    earlier = current.replace(f'"{FINGERPRINT}"', FINGERPRINT).replace(
+        'sheet: "yes"', "sheet: 'yes'"
+    )
+    assert earlier != current
+    root = tmp_path / "notes"
+    root.mkdir()
+    note = root / "book.md"
+    note.write_bytes(earlier.encode())
+    changes, counts = note_migration.plan(root)
+    assert counts["changed"] == 1
+    note_migration.apply(root, tmp_path / "backup", changes, counts)
+    assert note.read_bytes() == current.encode()
+    assert note_migration.plan(root)[1]["changed"] == 0
+
+
 def test_migration_dry_run_backup_verification_and_second_run(tmp_path, capsys):
     root = tmp_path / "notes"
     root.mkdir()
