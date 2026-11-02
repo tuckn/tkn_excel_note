@@ -1,4 +1,4 @@
-"""Canonical, flat presentation of Excel proxy-note Frontmatter."""
+"""Canonical, flat presentation of Excel proxy-note Frontmatter, and export quoting."""
 
 from __future__ import annotations
 
@@ -83,12 +83,14 @@ NoteLoader.yaml_implicit_resolvers = {
 class NoteDumper(SourcePathDumper):
     """Quote timestamps, empty strings and Obsidian links consistently."""
 
+    quoted: tuple[str, ...] = QUOTED
+
     def represent_mapping(
         self, tag: str, mapping: Any, flow_style: bool | None = None
     ) -> yaml.MappingNode:
         node = super().represent_mapping(tag, mapping, flow_style)
         for key, value in node.value:
-            if key.value in QUOTED and isinstance(value, yaml.ScalarNode):
+            if key.value in self.quoted and isinstance(value, yaml.ScalarNode):
                 value.style = '"'
         return node
 
@@ -99,6 +101,12 @@ def _string(dumper: NoteDumper, value: str) -> yaml.ScalarNode:
 
 
 NoteDumper.add_representer(str, _string)
+
+
+class ExportDumper(NoteDumper):
+    """Proxy-note quoting for export Frontmatter: titles stay plain, values unchanged."""
+
+    quoted = ("schemaVersion", "generatedAt", *TIMESTAMPS)
 
 
 def now_iso() -> str:

@@ -109,8 +109,39 @@ uv run python -m excel_catalog_pipeline.note_migration --root "C:\path\to\notes\
 | `extractedSheets` | 文字を抽出したワークシートの一覧 |
 | `unsupportedSheets` | チャートシートなど、抽出に対応していないシートの一覧 |
 
-`--context` を指定した場合は、代理ノートと同じ `context` で始まる項目も記録します。
+`--context` を指定した場合は、代理ノートと同じ `context` で始まる項目と、説明を反映した日時 `updated`（UTC）も記録します。
 `sourceId`、`noteId`、`sourceRoot` は持たないため、同期の対象として識別されません。
+
+次は `--context` なしで書き出した Frontmatter の例です（値は架空）。
+
+```markdown
+---
+type: ExcelExport
+schemaVersion: "1.0"
+title: example
+subject: ""
+author: Example User
+keywords: ""
+categories: ""
+comments: ""
+sourceFileName: example.xlsx
+sourceFullPath: 'C:\path\to\example.xlsx'
+sourceCreated: "2025-12-01T00:00:00Z"
+sourceModified: "2026-09-30T18:20:00+09:00"
+sourceSnapshotSha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+generatedAt: "2026-10-01T03:00:00.123456+00:00"
+generationMethod: text
+contextStatus: not-generated
+extractedSheets:
+- Data
+unsupportedSheets: []
+---
+```
+
+日時（`sourceCreated`、`sourceModified`、`generatedAt`、`--context` で追加する `updated`・`contextGeneratedAt`）と `schemaVersion` はダブルクォート、`sourceFullPath` はシングルクォートで囲みます。
+`sourceCreated` / `sourceModified` は Excel の文書プロパティの値をそのまま記録し、代理ノートと異なり日本時間・秒単位へ変換しません。
+`generatedAt` などツールが記録する日時は、UTC・マイクロ秒付きです。
+空文字列は `""`、空配列は `[]` です。`type`・`title` などその他の文字列は、必要な場合だけ引用符を付けます。
 
 ## 本文の構成
 

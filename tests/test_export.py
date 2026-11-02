@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from dataclasses import replace
 
 import pytest
+import yaml
 from tkn_genai_bridge import Profile
 
 import excel_catalog_pipeline.cli as cli
@@ -77,6 +79,53 @@ def test_plain_export_is_adjacent_and_independent(environment, capsys):
     assert book.read_bytes() == before and not calls
     assert not config.sources[0].note_root.exists() and not paths.app_root().exists()
     assert discover_notes(replace(config.sources[0], note_root=book.parent)) == []
+
+
+def _header(note):
+    text = note.read_text(encoding="utf-8")
+    assert text.startswith("---\n")
+    return text[4 : text.index("\n---\n") + 1]
+
+
+@pytest.mark.parametrize(
+    ("created", "modified"),
+    [
+        ("2025-12-01T00:00:00Z", "2026-01-01T00:00:00+09:00"),
+        ("2025-12-01", "2026-01-01T00:00:00.123456-05:00"),
+    ],
+)
+def test_export_frontmatter_quotes_dates_versions_and_path(environment, created, modified):
+    _, book, _ = environment
+    book = create_workbook(
+        book.with_name("O'Brien.xlsx"), subject="", created=created, modified=modified
+    )
+    assert cli.main(["--json", "export", str(book)]) == 0
+    header = _header(book.with_name(book.name + ".md"))
+    lines = header.splitlines()
+    path = str(book.resolve())
+    assert {"type: ExcelExport", "title: Example title", 'schemaVersion: "1.0"'} <= set(lines)
+    # Values keep their original precision and offsets; only the quoting is fixed.
+    assert f'sourceCreated: "{created}"' in lines and f'sourceModified: "{modified}"' in lines
+    assert re.search(r'^generatedAt: "\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00"$', header, re.M)
+    assert "sourceFullPath: '" + path.replace("'", "''") + "'" in lines
+    assert 'subject: ""' in lines
+    # A YAML 1.1 loader with timestamp resolution must still read plain strings.
+    loaded = yaml.safe_load(header)
+    assert loaded["schemaVersion"] == "1.0" and loaded["sourceFullPath"] == path
+    assert (loaded["sourceCreated"], loaded["sourceModified"]) == (created, modified)
+    assert isinstance(loaded["generatedAt"], str) and loaded["subject"] == ""
+
+
+def test_context_export_quotes_added_timestamps(environment):
+    _, book, _ = environment
+    assert cli.main(["--json", "export", str(book), "--context"]) == 0
+    header = _header(book.with_name(book.name + ".md"))
+    for key in ("generatedAt", "updated", "contextGeneratedAt"):
+        assert re.search(rf'^{key}: "[^"]+\+00:00"$', header, re.M), key
+    assert 'schemaVersion: "1.0"' in header.splitlines()
+    assert re.search(r"^sourceFullPath: '[^']+'$", header, re.M)
+    loaded = yaml.safe_load(header)
+    assert all(isinstance(loaded[key], str) for key in ("updated", "contextGeneratedAt"))
 
 
 def test_recursive_folder_export_and_single_output(environment, tmp_path, capsys):

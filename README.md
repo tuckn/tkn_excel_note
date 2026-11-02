@@ -24,9 +24,13 @@ tkn-excel-note export "C:\path\to\移行手順.xlsx" --context
 ```markdown
 ---
 type: ExcelExport
+schemaVersion: "1.0"
 title: 移行手順
 author: Example User
 sourceFileName: 移行手順.xlsx
+sourceFullPath: 'C:\path\to\移行手順.xlsx'
+sourceModified: "2026-09-30T18:20:00+09:00"
+generatedAt: "2026-10-01T03:00:00.123456+00:00"
 generationMethod: context
 contextStatus: current
 ---

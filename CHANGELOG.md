@@ -4,6 +4,7 @@
 
 - 代理ノートの `type` を、固有名詞の表記どおり引用符なしの `Excel` に変更し、`schemaVersion` を `"4.0.0"` に更新（非互換変更）。読み取りでは以前の `excel` も代理ノートとして認識し、独自の note profile の `type: excel` もそのまま使用可能。`type: excel` で絞り込む外部スクリプトや Bases は `type: Excel` に更新し、既存ノートは `python -m excel_catalog_pipeline.note_migration` で移行してください。
 - `pull --context` / `export --context` の Frontmatter に `contextProfiles` を追加。ノート内のシート説明・ブック要約に使った文章の profile 名を、重複なしの一覧で記録。
+- `export` の Frontmatter の引用符を共通のYAML記述規約に統一。日時（`sourceCreated`・`sourceModified`・`generatedAt`、`--context` 時の `updated`・`contextGeneratedAt`）と `schemaVersion` をダブルクォート、空文字列を `""` で出力し、`sourceFullPath` はシングルクォートを維持。項目・値（小数秒・タイムゾーン）と書き出しの `schemaVersion: "1.0"` は変更なし。既存の書き出しを `--force` で再作成すると、引用符だけの差分が出ます。これまで引用符なしだった日時を YAML 1.1 のローダーで日時型として読み込んでいた外部スクリプトは、文字列として受け取るよう更新してください。
 
 ## 5.1.0 - 2026-11-01
 

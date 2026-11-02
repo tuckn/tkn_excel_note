@@ -7,8 +7,7 @@ from typing import Any
 
 import yaml
 
-from .note_frontmatter import NoteLoader, normalize_note
-from .note_yaml import SourcePathDumper
+from .note_frontmatter import ExportDumper, NoteLoader, normalize_note
 
 FRONTMATTER = re.compile(r"\A(\ufeff?---[ \t]*\r?\n)(.*?)(\r?\n---[ \t]*\r?\n?)", re.DOTALL)
 
@@ -38,7 +37,8 @@ def patch_frontmatter(text: str, values: dict[str, Any]) -> str:
         rendered = (
             yaml.dump(
                 {name: value},
-                Dumper=SourcePathDumper,
+                # Non-proxy notes are export files; keep their quoting in sync.
+                Dumper=ExportDumper,
                 allow_unicode=True,
                 sort_keys=False,
                 width=1000,

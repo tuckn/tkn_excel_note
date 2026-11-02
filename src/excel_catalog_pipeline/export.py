@@ -23,7 +23,7 @@ from .context_provider import utc_now
 from .context_source import ContextError, extract_sheet, sheet_list
 from .generation import resolve_generation
 from .models import Action, AppConfig, SourceConfig, WorkbookInfo
-from .note_yaml import SourcePathDumper
+from .note_frontmatter import ExportDumper
 from .paths import state_root
 from .shared_read import read_shared
 from .sheet_layout import arrange_sheets, managed
@@ -172,7 +172,7 @@ def _render_note(info: WorkbookInfo, data: bytes, config: AppConfig, with_contex
                 )
             )
     header = yaml.dump(
-        frontmatter, Dumper=SourcePathDumper, allow_unicode=True, sort_keys=False, width=1000
+        frontmatter, Dumper=ExportDumper, allow_unicode=True, sort_keys=False, width=1000
     )
     return "---\n" + header + "---\n\n" + arrange_sheets("\n".join(lines), sheets)
 
