@@ -71,7 +71,7 @@ def test_source_create_update_push_preserves_identity_and_user_text(setup):
     before = book.read_bytes()
     assert pull(book, output) == 0
     first = read_note(output)
-    assert first.frontmatter["type"] == "excel"
+    assert first.frontmatter["type"] == "Excel"
     assert first.frontmatter["contextStatus"] == "not-generated"
     assert "contextProfiles" not in first.frontmatter
     assert book.read_bytes() == before and not calls

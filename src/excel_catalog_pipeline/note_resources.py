@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from .note_frontmatter import NOTE_TYPE
+
 PROFILE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 PLACEHOLDER_PATTERN = re.compile(
     r"{{\s*(?P<name>[a-z][a-z0-9_]*)"
@@ -128,8 +130,9 @@ def _validate_template(profile: str, text: str) -> NoteTemplate:
         raise NoteResourceError(f"Note profile {profile!r} has invalid Frontmatter: {exc}") from exc
     if not isinstance(frontmatter, dict):
         raise NoteResourceError(f"Note profile {profile!r} Frontmatter must be a mapping")
-    if frontmatter.get("type") != "excel":
-        raise NoteResourceError(f"Note profile {profile!r} type must be 'excel'")
+    # Custom profiles written for the older "excel" value stay valid; output uses NOTE_TYPE.
+    if str(frontmatter.get("type", "")).casefold() != NOTE_TYPE.casefold():
+        raise NoteResourceError(f"Note profile {profile!r} type must be {NOTE_TYPE!r}")
     schema_version = frontmatter.get("schemaVersion")
     if not isinstance(schema_version, str) or not schema_version.strip():
         raise NoteResourceError(

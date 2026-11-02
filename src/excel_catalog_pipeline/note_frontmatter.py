@@ -11,7 +11,9 @@ import yaml
 from .note_yaml import SourcePathDumper
 
 JST = timezone(timedelta(hours=9))
-SCHEMA_VERSION = "3.0.0"
+SCHEMA_VERSION = "4.0.0"
+# Proper noun: keep the product capitalization. Older notes used "excel".
+NOTE_TYPE = "Excel"
 HEAD = ("type", "schemaVersion", "title", "description", "cover")
 TAIL = ("tags", "created", "updated", "noteId")
 GROUPS = (
@@ -36,6 +38,8 @@ GROUPS = (
     ),
 )
 TIMESTAMPS = ("created", "updated", "sourceCreated", "sourceModified", "contextGeneratedAt")
+# `type` stays plain (`type: Excel`); the other head values and timestamps are double-quoted.
+QUOTED = (*(key for key in HEAD if key != "type"), *TIMESTAMPS)
 LISTS = (
     "keywords",
     "categories",
@@ -84,7 +88,7 @@ class NoteDumper(SourcePathDumper):
     ) -> yaml.MappingNode:
         node = super().represent_mapping(tag, mapping, flow_style)
         for key, value in node.value:
-            if key.value in (*HEAD, *TIMESTAMPS) and isinstance(value, yaml.ScalarNode):
+            if key.value in QUOTED and isinstance(value, yaml.ScalarNode):
                 value.style = '"'
         return node
 
@@ -131,7 +135,7 @@ def normalize_frontmatter(values: dict[str, Any]) -> dict[str, Any]:
     if not result.get("created"):
         result["created"] = result.get("date", "")
     result.pop("date", None)
-    result.update(type="excel", schemaVersion=SCHEMA_VERSION)
+    result.update(type=NOTE_TYPE, schemaVersion=SCHEMA_VERSION)
     for key in (*HEAD, *TAIL):
         result.setdefault(key, [] if key == "tags" else "")
     result.setdefault("contextStatus", "not-generated")
@@ -191,7 +195,7 @@ def normalize_note(text: str, updates: dict[str, Any] | None = None) -> str:
     if not isinstance(values, dict):
         raise NoteFrontmatterError("Frontmatter must be a mapping")
     if (
-        str(values.get("type", "")).casefold() != "excel"
+        str(values.get("type", "")).casefold() != NOTE_TYPE.casefold()
         and values.get("fileKind") != "excelWorkbook"
     ):
         raise NoteFrontmatterError("Not an Excel proxy note")

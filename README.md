@@ -69,7 +69,7 @@ contextStatus: current
 | 使い方 | コマンド | 向いている用途 | 出力 |
 | --- | --- | --- | --- |
 | 書き出し | `export` | 1つのブックやフォルダを、その場で Markdown にする | 各ブックの隣の `<ファイル名>.md`（`type: ExcelExport`） |
-| 同期 | `pull` / `push` | 決まったフォルダのブックを、ノートとして継続的に管理する | ノート用フォルダの代理ノート（`type: "excel"`） |
+| 同期 | `pull` / `push` | 決まったフォルダのブックを、ノートとして継続的に管理する | ノート用フォルダの代理ノート（`type: Excel`） |
 
 書き出しは、実行のたびに新しい Markdown を作ります。
 前回の結果を再利用しないため、`--context` を付けると毎回 AI を呼び出します。
@@ -381,7 +381,7 @@ tkn-excel-note pull --source workbooks
 `--context` で使った文章の profile 名は、Frontmatter の `contextProfiles` に一覧で残ります。
 複数の profile を使った場合は、すべての名前を重複なく残します。
 
-代理ノートの Frontmatter は `type: "excel"`・`schemaVersion: "3.0.0"` の形式です。
+代理ノートの Frontmatter は `type: Excel`・`schemaVersion: "4.0.0"` の形式です。
 項目の並び、日時の表記、各項目の意味は「[ノートの形式](docs/reference/note-format.md)」を参照してください。
 
 結果は画面に表示され、処理ごとのレポートが `~/.tkn/excel_note/state/runs/<run-id>/` に保存されます。
@@ -603,7 +603,7 @@ tkn-excel-note --version
 ```
 
 バージョンごとの変更内容と必要な対応は [CHANGELOG.md](CHANGELOG.md) を参照してください。
-旧形式（`type: Excel`）の代理ノートを現在の形式へ移す方法は、「[既存代理ノートのYAMLだけを移行する](docs/reference/note-format.md#既存代理ノートのyamlだけを移行する)」で説明しています。
+以前の形式（`type: excel` など）の代理ノートを現在の形式へ移す方法は、「[既存代理ノートのYAMLだけを移行する](docs/reference/note-format.md#既存代理ノートのyamlだけを移行する)」で説明しています。
 
 ## 10. 開発と検証
 

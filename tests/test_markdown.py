@@ -69,7 +69,7 @@ def test_render_preserves_unknown_fields_and_handwritten_body(tmp_path: Path) ->
     note_path.write_text(rendered, encoding="utf-8")
     updated = read_note(note_path)
     assert updated.frontmatter["customField"] == "keep-me"
-    assert updated.frontmatter["schemaVersion"] == "3.0.0"
+    assert updated.frontmatter["schemaVersion"] == "4.0.0"
     assert updated.frontmatter["description"] == "Old"
     assert updated.frontmatter["comments"] == "Example description"
     assert list(updated.frontmatter) == [
@@ -114,7 +114,7 @@ def test_packaged_note_profile_owns_markdown_structure(tmp_path: Path) -> None:
     note_path.write_text(rendered, encoding="utf-8")
     note = read_note(note_path)
 
-    assert template.schema_version == "3.0.0"
+    assert template.schema_version == "4.0.0"
     assert template.frontmatter_fields == (
         "type",
         "schemaVersion",
@@ -148,7 +148,8 @@ def test_packaged_note_profile_owns_markdown_structure(tmp_path: Path) -> None:
     assert note.frontmatter["sourceCreated"] == "2025-12-01T09:00:00+09:00"
     assert note.frontmatter["sourceModified"] == "2026-01-01T00:00:00+09:00"
     assert "Excel Metadata" not in rendered
-    for field in ("type", "schemaVersion", "sourceCreated", "sourceModified", "created", "updated"):
+    assert "type: Excel" in rendered.splitlines()
+    for field in ("schemaVersion", "sourceCreated", "sourceModified", "created", "updated"):
         line = next(line for line in rendered.splitlines() if line.startswith(f"{field}:"))
         assert "'" not in line
         assert '"' in line

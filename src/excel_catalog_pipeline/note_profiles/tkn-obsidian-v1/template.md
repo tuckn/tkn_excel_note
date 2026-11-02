@@ -1,6 +1,6 @@
 ---
-type: "excel"
-schemaVersion: "3.0.0"
+type: Excel
+schemaVersion: "4.0.0"
 title: {{ title }}
 description: {{ description }}
 cover: {{ cover }}

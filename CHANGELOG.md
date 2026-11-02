@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 代理ノートの `type` を、固有名詞の表記どおり引用符なしの `Excel` に変更し、`schemaVersion` を `"4.0.0"` に更新（非互換変更）。読み取りでは以前の `excel` も代理ノートとして認識し、独自の note profile の `type: excel` もそのまま使用可能。`type: excel` で絞り込む外部スクリプトや Bases は `type: Excel` に更新し、既存ノートは `python -m excel_catalog_pipeline.note_migration` で移行してください。
 - `pull --context` / `export --context` の Frontmatter に `contextProfiles` を追加。ノート内のシート説明・ブック要約に使った文章の profile 名を、重複なしの一覧で記録。
 
 ## 5.1.0 - 2026-11-01

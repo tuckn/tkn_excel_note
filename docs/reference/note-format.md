@@ -8,8 +8,8 @@
 
 | 観点 | 書き出し（`export`） | 代理ノート（`pull`） |
 | --- | --- | --- |
-| `type` | `ExcelExport` | `excel` |
-| `schemaVersion` | `"1.0"` | `"3.0.0"` |
+| `type` | `ExcelExport` | `Excel` |
+| `schemaVersion` | `"1.0"` | `"4.0.0"` |
 | 保存先 | 既定は各ブックの隣。単体のブックは `--output` で変更可能 | `sources.<id>.notes.dir` |
 | 管理マーカー | なし | ツールが管理する本文を `excel-catalog` マーカーで囲む |
 | 更新 | `--force` で全体を置き換え | 管理マーカー内と同期対象の Frontmatter だけを更新 |
@@ -22,8 +22,8 @@
 
 | 項目 | 内容 | 更新するコマンド |
 | --- | --- | --- |
-| `type` | 常に `excel`。旧 `Excel` も読み取れます | ノート更新時 |
-| `schemaVersion` | 代理ノートの形式の版。引用符付きの文字列 `"3.0.0"` | ノート更新時 |
+| `type` | 常に `Excel`（引用符なし）。以前の `excel` も代理ノートとして読み取れます | ノート更新時 |
+| `schemaVersion` | 代理ノートの形式の版。引用符付きの文字列 `"4.0.0"` | ノート更新時 |
 | `title`、`subject`、`author`、`keywords`、`categories`、`comments` | Excel の文書プロパティ。編集すると `push` で Excel へ反映できます。対応は「[メタデータの対応](synchronization.md#メタデータの対応)」を参照してください。 | `pull` / `push` |
 | `description` | ノート全体の概要。Excel には反映しません。 | 利用者 |
 | `cover` | カード表示用の画像へのリンク | `pull` |
@@ -66,7 +66,9 @@ AI生成情報は `contextStatus → contextProfiles → contextAnalyzedSheets �
 日時は `"2026-06-21T05:44:56+09:00"` のように、ダブルクォート付き・日本時間・秒単位に統一します。
 UTCなどは同じ瞬間の日本時間に変換し、小数秒は省略します。時刻不明の日付だけの値は維持します。
 タイムゾーンがない日時、不正な日時、値の異なる `date` と `created` の併存はエラーにし、推測で補完しません。
-空文字列は `""`、空配列は `[]` です。先頭5項目・日時・Obsidianリンクはダブルクォートで囲み、`sourceFullPath` はシングルクォートで囲みます。
+空文字列は `""`、空配列は `[]` です。
+`type` は引用符なしの `type: Excel` と書きます。
+`type` 以外の先頭4項目・日時・Obsidianリンクはダブルクォートで囲み、`sourceFullPath` はシングルクォートで囲みます。
 `description` はノートの概要、`comments` はExcelの文書プロパティであり、別々に保持します。
 `keywords` と `categories` は、`sources.<id>.notes.frontmatter_term_format` が `obsidian-link` なら `[[...]]` 形式のリンク、`plain` なら通常の文字列の一覧です。
 `files` 項目は同期に使いません。
@@ -79,7 +81,7 @@ Excelや同期記録に触れず、Frontmatterだけを新形式へ揃える補�
 
 ```powershell
 uv run python -m excel_catalog_pipeline.note_migration --root "C:\path\to\notes\Excel" --dry-run
-uv run python -m excel_catalog_pipeline.note_migration --root "C:\path\to\notes\Excel" --backup-dir "C:\path\to\private-backups\excel-frontmatter-v3"
+uv run python -m excel_catalog_pipeline.note_migration --root "C:\path\to\notes\Excel" --backup-dir "C:\path\to\private-backups\excel-frontmatter-v4"
 ```
 
 - 対象フォルダ配下のExcel代理ノートだけを更新します。FrontmatterのないMarkdownや別typeはスキップします。
@@ -89,7 +91,7 @@ uv run python -m excel_catalog_pipeline.note_migration --root "C:\path\to\notes\
 - YAMLのコメント・引用符・項目間の空行は新形式へ再整形します。独自項目の値は維持します。
 - 同時編集を検出した場合は停止します。途中失敗では、今回書いた内容のままのノートだけを復元します。
 - バックアップ先の `files/` に元ファイル、`recovery-index.json` に復元用の相対パスとハッシュ、`report.json` に件数を保存します。バックアップには元の私的情報が含まれるため、privateな保存先を使ってください。
-- 進捗は標準エラー、結果は標準出力の1行JSONです。同じノートへの再実行は追加変更を生みません。
+- 進捗は標準エラー、結果は標準出力に1行ごとの `key=value` で表示します。`--json` を付けると JSON で表示します。同じノートへの再実行は追加変更を生みません。
 
 ## 書き出しの Frontmatter
 

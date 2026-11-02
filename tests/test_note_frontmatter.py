@@ -61,9 +61,19 @@ def test_normalization_preserves_body_identity_custom_values_and_is_stable(newli
     assert after["sourceCreated"] == "2026-06-21T05:44:56+09:00"
     assert after["description"] == "" and after["tags"] == []
     assert tuple(after)[:5] == HEAD and tuple(after)[-4:] == TAIL
-    assert after["schemaVersion"] == "3.0.0" and after["type"] == "excel"
+    assert after["schemaVersion"] == "4.0.0" and after["type"] == "Excel"
+    assert f"---{newline}type: Excel{newline}" in result
     assert 'updated: "2026-10-04T13:31:15+09:00"' in result
     assert '- "[[Equipment]]"' in result
+    assert normalize_note(result) == result
+
+
+@pytest.mark.parametrize("old_type", ["excel", '"excel"', "Excel", '"Excel"'])
+def test_older_type_spellings_are_written_as_plain_proper_noun(old_type):
+    text = LEGACY.replace("type: Excel", f"type: {old_type}").replace('"2.1"', '"3.0.0"')
+    result = normalize_note(text)
+    assert values(result)["type"] == "Excel" and values(result)["schemaVersion"] == "4.0.0"
+    assert result.startswith('---\ntype: Excel\nschemaVersion: "4.0.0"\n')
     assert normalize_note(result) == result
 
 

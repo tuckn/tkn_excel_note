@@ -211,7 +211,7 @@ def test_manual_cover_and_custom_content_preserved(monkeypatch, tmp_path: Path) 
         'cover: ""', "cover: https://example.com/manual.png"
     )
     text = (
-        text.replace('type: "excel"', 'custom: keep\ntype: "excel"') + "\n## My notes\nKeep this.\n"
+        text.replace("type: Excel", "custom: keep\ntype: Excel") + "\n## My notes\nKeep this.\n"
     )
     note.write_text(text, encoding="utf-8")
     set_thumbnail(workbook, png())
