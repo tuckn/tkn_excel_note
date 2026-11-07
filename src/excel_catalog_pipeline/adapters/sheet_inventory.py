@@ -83,12 +83,17 @@ def _cells(root: ET.Element, archive: ZipFile, result: SheetInventory) -> None:
     result.content_range = (first if first == last else f"{first}:{last}") if count else ""
 
 
+def uncounted_objects(root: ET.Element) -> list[str]:
+    """Objects outside DrawingML that the shape, image and chart counts leave out."""
+    notes = []
+    if root.find(S + "legacyDrawing") is not None:
+        notes.append("Legacy VML objects (comments, form controls, text boxes) are not counted")
+    if root.find(S + "oleObjects") is not None or root.find(S + "controls") is not None:
+        notes.append("Embedded OLE objects and ActiveX controls are not counted")
+    return notes
+
+
 def _drawings(archive: ZipFile, part: str, root: ET.Element) -> tuple[int, int, int]:
-    if any(
-        root.find(S + tag) is not None
-        for tag in ("legacyDrawing", "legacyDrawingHF", "oleObjects", "controls", "extLst")
-    ):
-        raise ValueError("Unsupported legacy or extended objects")
     shapes = images = charts = 0
 
     def visit(node: ET.Element, drawing_part: str) -> None:
@@ -155,6 +160,7 @@ def read_inventory(archive: ZipFile, part: str) -> SheetInventory:
         result.warnings.append("Table inventory unavailable")
     try:
         result.shapes, result.images, result.charts = _drawings(archive, part, root)
+        result.warnings.extend(uncounted_objects(root))
     except (KeyError, ET.ParseError, ValueError):
         result.warnings.append("Drawing inventory unavailable or unsupported")
     return result

@@ -30,6 +30,10 @@ from ..note_resources import (
 from ..sheet_layout import arrange_sheets, sheet_id
 
 WINDOWS_PATH_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
+EXTRACTION_LEGEND = (
+    "Saved values without recalculation, one worksheet row per line as `cell: value`; "
+    "formulas follow in code spans and dates use ISO form. Drawings and comments follow the cells."
+)
 
 
 class FrontmatterLoader(NoteLoader):
@@ -244,13 +248,15 @@ def _sheet_extraction(workbook: WorkbookInfo) -> dict[str, str]:
         name = sheet["name"]
         values = workbook.sheet_text.get(name, [])
         lines = ["- " + value.replace("\n", "\n  ") for value in values]
+        if lines:
+            lines.insert(0, EXTRACTION_LEGEND + "\n")
         status = workbook.sheet_text_status.get(name, "complete")
         if workbook.read_status != "ok":
             lines.append(f"Extraction unavailable: {workbook.read_status}.")
         elif status == "unavailable":
             lines.append("Extraction unavailable for this sheet type or saved sheet data.")
         elif status == "truncated":
-            lines.append("Text omitted: workbook extraction character limit reached.")
+            lines.append("Remaining text omitted: sheet extraction character limit reached.")
         elif not values:
             lines.append("No text extracted.")
         result[sheet_id(sheet)] = "\n".join(lines)

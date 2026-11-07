@@ -7,6 +7,12 @@ spatial relationships, arrow directions, source/destination keys, meaningful col
 text boxes and isolated annotations. Read regions left-to-right then down (Z order).
 Use overview images for orientation and detail tiles for small text. Overlap repeats content, not steps.
 Exact extracted text assists reading but spatial meaning comes from the images.
+Layout carries meaning even on sheets without drawings: bordered or shaded ranges can form tables
+without Excel table objects, and labels indented or shifted to a later column usually mark child items
+of the label above. Reconstruct such tables and hierarchies; mark them as inference when no label confirms them.
+In evidence, cells hold saved values (display shows dates converted from serial numbers), styles maps
+each cell style index to its number format, font, fill, border and alignment, and comments and
+legacyShapes hold text that may not appear in the images.
 Do not invent illegible text, missing mappings, modifiers or meanings for unexplained colors.
 Retain useful specifics, keyboard mappings, scan codes, named tools, examples, rationale and conditions.
 Separate source statements from inference. Locate ambiguities and contradictions by sheet range.

@@ -106,7 +106,7 @@ Windows のパスをシングルクォートで囲むと、バックスラッシ
 
 | 設定キー | 既定値 | 意味 |
 | --- | --- | --- |
-| `sync.max_extracted_text_chars` | `12000` | 代理ノートの「Extracted Text」に出力する、1ブックあたりの最大文字数です。`export` には適用しません。 |
+| `sync.max_extracted_text_chars` | `12000` | 代理ノートの「Extracted Text」に出力する、1シートあたりの最大文字数です。`export` には適用しません。 |
 
 同期の動作は次のとおりです。
 
@@ -306,7 +306,8 @@ BOM 付きでも読み込めます。
 
 `max_input_chars` 以外の数値は、正の整数で指定します。
 上限を超えた場合は、対象を切り詰めずにエラーとして停止します。
-上限を変えると、`pull` で前回の説明を再利用できなくなる場合があります。
+`max_cells`・`max_objects`・`max_input_chars`・`max_workbook_mb`・`max_reference_chars` を変えても、`pull` は前回の説明を再利用します。
+画像化の設定（`max_images`・タイルの大きさ・重なり・解像度）を変えると、AI に渡す画像が変わるため、次の `pull --context` で生成し直します。
 
 `max_input_chars` は、根拠データの JSON の文字数だけに適用し、画像とプロンプトの固定部分は含みません。
 根拠データは、通常の JSON より短くなる場合、列名を一度だけ書く表形式で送ります。

@@ -23,6 +23,7 @@ from ..discovery import is_source_path_in_scope
 from ..models import SourceConfig, WorkbookInfo
 from ..paths import temporary_root
 from ..shared_read import read_shared
+from . import sheet_text
 from .sheet_inventory import read_inventory
 
 OOXML_EXTENSIONS = {".xlsx", ".xlsm"}
@@ -173,44 +174,6 @@ def read_sheets(archive: zipfile.ZipFile) -> list[dict[str, str]]:
     return result
 
 
-def _shared_strings(archive: zipfile.ZipFile) -> list[str]:
-    root = _parse_entry(archive, "xl/sharedStrings.xml")
-    if root is None:
-        return []
-    result: list[str] = []
-    for item in root:
-        if local_name(item.tag) != "si":
-            continue
-        result.append(
-            normalize_space(
-                "".join(part.text or "" for part in item.iter() if local_name(part.tag) == "t")
-            )
-        )
-    return result
-
-
-def _child_text(element: ET.Element, name: str) -> str:
-    for child in element:
-        if local_name(child.tag) == name:
-            return child.text or ""
-    return ""
-
-
-def _cell_text(cell: ET.Element, shared: list[str]) -> str:
-    cell_type = cell.attrib.get("t", "")
-    value = _child_text(cell, "v")
-    if cell_type == "s" and value.isdigit():
-        index = int(value)
-        return shared[index] if 0 <= index < len(shared) else ""
-    if cell_type == "inlineStr":
-        return "".join(item.text or "" for item in cell.iter() if local_name(item.tag) == "t")
-    if cell_type == "b":
-        return "TRUE" if value == "1" else "FALSE"
-    if cell_type in {"str", "e", "n", ""}:
-        return value
-    return value
-
-
 def read_sheet_text(
     archive: zipfile.ZipFile,
     sheets: list[dict[str, str]],
@@ -218,44 +181,8 @@ def read_sheet_text(
     *,
     statuses: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
-    shared = _shared_strings(archive)
-    remaining = max_text_chars
-    result: dict[str, list[str]] = {}
-    statuses = statuses if statuses is not None else {}
-    for sheet in sheets:
-        path = sheet.get("path", "")
-        name = sheet.get("name", path)
-        if not path.startswith("xl/worksheets/"):
-            statuses[name] = "unavailable"
-            continue
-        if remaining <= 0:
-            statuses[name] = "truncated"
-            continue
-        root = _parse_entry(archive, path) if path else None
-        if root is None:
-            statuses[name] = "unavailable"
-            continue
-        statuses[name] = "complete"
-        values: list[str] = []
-        seen: set[str] = set()
-        for cell in root.iter():
-            if local_name(cell.tag) != "c":
-                continue
-            text = normalize_space(_cell_text(cell, shared))
-            if not text or text.casefold() in seen:
-                continue
-            seen.add(text.casefold())
-            if remaining <= 0:
-                statuses[name] = "truncated"
-                break
-            values.append(text[:remaining])
-            remaining -= len(text)
-            if remaining < 0:
-                statuses[name] = "truncated"
-                break
-        if values:
-            result[sheet.get("name", path)] = values
-    return result
+    """Cell-addressed text per sheet; see adapters.sheet_text for the format."""
+    return sheet_text.read_sheet_text(archive, sheets, max_text_chars, statuses=statuses)
 
 
 def content_fingerprint(archive: zipfile.ZipFile) -> str:

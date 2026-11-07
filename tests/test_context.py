@@ -14,6 +14,7 @@ import excel_catalog_pipeline.context as context
 from excel_catalog_pipeline.adapters.markdown import note_path, render_note
 from excel_catalog_pipeline.adapters.ooxml import inspect_workbook
 from excel_catalog_pipeline.config import DEFAULT_CONFIG, ConfigError, validate_config
+from excel_catalog_pipeline.context_profiles import load_context_profile, render_context
 from excel_catalog_pipeline.context_render import Box, tile_boxes
 from excel_catalog_pipeline.context_source import (
     ContextError,
@@ -125,7 +126,9 @@ def build_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         (output / "001.png").write_bytes(b"fixture image")
         return [{"image": "001.png", "range": "$A$1:$C$9", "overview": False}]
 
-    def generate(config, evidence, images, usage_path, logger, *, profile, on_usage):
+    def generate(
+        config, evidence, images, usage_path, logger, *, profile, on_usage, on_output=None
+    ):
         calls.append(evidence["sheet"])
         on_usage(
             {
@@ -136,11 +139,22 @@ def build_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                 "durationSeconds": 1,
             }
         )
-        return (
-            "### Purpose\n\nReadable context.\n\n![Evidence]("
-            + evidence["images"][0]["relativePath"]
-            + ")"
-        )
+        data = {
+            "summary": "Readable context.",
+            "conclusion": None,
+            "key_points": [],
+            "sections": [
+                {
+                    "heading": "Evidence",
+                    "body": "![Evidence](" + evidence["images"][0]["relativePath"] + ")",
+                    "subsections": [],
+                }
+            ],
+            "uncertainties": [],
+        }
+        if on_output is not None:
+            on_output(data)
+        return render_context(load_context_profile(config), data)
 
     monkeypatch.setattr(context, "render_sheet", render)
     monkeypatch.setattr(context, "generate_markdown", generate)
@@ -271,7 +285,9 @@ def test_failed_generation_preserves_previous_note_and_assets(build_setup, monke
 def test_local_links_are_plain_text_without_losing_other_links(build_setup, monkeypatch) -> None:
     _, _, note, _, calls, run = build_setup
 
-    def generate(config, evidence, images, usage_path, logger, *, profile, on_usage):
+    def generate(
+        config, evidence, images, usage_path, logger, *, profile, on_usage, on_output=None
+    ):
         calls.append(evidence["sheet"])
         on_usage({"inputTokens": 1, "outputTokens": 2, "durationSeconds": 1})
         return (
@@ -519,6 +535,120 @@ def test_shared_model_change_invalidates_context_cache(build_setup, monkeypatch)
     monkeypatch.setattr(context, "resolve_profile", lambda config: Profile(model="changed-model"))
     assert run()["results"][0]["status"] == "written"
     assert len(calls) == 2
+
+
+def _changed_template(monkeypatch, old: str, new: str) -> None:
+    from dataclasses import replace
+
+    real = context.load_context_profile
+
+    def changed(config, *, stage="sheet"):
+        profile = real(config, stage=stage)
+        return replace(
+            profile,
+            template=profile.template.replace(old, new),
+            template_sha256=profile.template_sha256 + "-changed",
+        )
+
+    monkeypatch.setattr(context, "load_context_profile", changed)
+
+
+def test_saved_output_is_rerendered_with_a_new_template_without_ai(build_setup, monkeypatch):
+    _, _, note, state_root, calls, run = build_setup
+    assert run()["results"][0]["status"] == "written"
+    state = json.loads(next(state_root.rglob("sheet-1.json")).read_text(encoding="utf-8"))
+    output = note.parent / state["outputPath"]
+    assert json.loads(output.read_text(encoding="utf-8"))["data"]["summary"] == "Readable context."
+    assert output.with_name("evidence.json").is_file()
+    _changed_template(monkeypatch, "シート要約", "シート概要")
+    monkeypatch.setattr(context, "render_sheet", lambda *a: pytest.fail("must not render"))
+    before = note.read_bytes()
+    assert run(dry_run=True)["results"][0]["status"] == "would-rerender"
+    assert note.read_bytes() == before
+    result = run()
+    assert result["results"][0]["status"] == "rerendered"
+    assert result["usage"]["calls"] == 0 and calls == ["Data"]
+    block = context.existing_block(note.read_text(encoding="utf-8-sig"), "1")
+    assert "#### シート概要" in block and "Readable context." in block
+    assert "Keep this." in note.read_text(encoding="utf-8-sig")
+    assert run()["results"][0]["status"] == "cached"
+
+
+def test_missing_saved_output_keeps_the_old_block_without_ai(build_setup, monkeypatch):
+    _, _, note, state_root, calls, run = build_setup
+    run()
+    state = json.loads(next(state_root.rglob("sheet-1.json")).read_text(encoding="utf-8"))
+    (note.parent / state["outputPath"]).unlink()
+    before = note.read_bytes()
+    _changed_template(monkeypatch, "シート要約", "シート概要")
+    result = run()
+    assert result["results"][0]["status"] == "cached"
+    assert result["results"][0]["templateOutdated"] is True
+    assert note.read_bytes() == before and calls == ["Data"]
+
+
+def test_limits_and_bridge_version_do_not_invalidate_context(build_setup, monkeypatch):
+    source, _, _, _, calls, run = build_setup
+    assert run()["results"][0]["status"] == "written"
+    real_plan = context.generation_plan
+
+    def newer_bridge(profile, **kwargs):
+        plan = real_plan(profile)
+        return {**plan, "bridge_version": "99.0.0", "generation_settings_sha256": "other"}
+
+    monkeypatch.setattr(context, "generation_plan", newer_bridge)
+    result = context.run_context(
+        source,
+        ContextConfig(max_cells=20000, max_objects=20000, max_workbook_mb=200),
+        workbook_selector="book.xlsx",
+        sheet_names=["Data"],
+        all_sheets=False,
+        list_only=False,
+        dry_run=False,
+        force=False,
+        logger=LOGGER,
+    )
+    assert result["results"][0]["status"] == "cached"
+    assert calls == ["Data"]
+
+
+def test_generator_identity_keeps_answer_settings_but_not_timeouts() -> None:
+    from tkn_genai_bridge import OllamaSettings
+
+    def identity(**values):
+        return context._generator_identity(Profile(provider="ollama", model="m", **values))
+
+    thinking = identity(ollama=OllamaSettings(think=True))
+    assert thinking != identity(ollama=OllamaSettings(think=False))
+    assert thinking == identity(ollama=OllamaSettings(think=True), timeout_seconds=900)
+    assert context._generator_identity(Profile(model="a")) != context._generator_identity(
+        Profile(model="b")
+    )
+    assert identity(max_output_tokens=100) != identity(max_output_tokens=200)
+
+
+def test_uncached_input_scope_is_counted_as_total_input() -> None:
+    from tkn_genai_bridge import Usage
+
+    from excel_catalog_pipeline.context_provider import record_input_tokens, usage_fields
+
+    fields = usage_fields(
+        Usage(
+            input_tokens=2,
+            cached_input_tokens=971,
+            cache_write_tokens=26194,
+            input_tokens_scope="uncached",
+        )
+    )
+    assert fields["inputTokens"] == 2
+    assert fields["totalInputTokens"] == 2 + 971 + 26194
+    assert record_input_tokens({"inputTokens": 5}) == 5
+    total = usage_fields(Usage(input_tokens=40, cached_input_tokens=10, input_tokens_scope="total"))
+    assert total["totalInputTokens"] == 40
+    unknown = usage_fields(
+        Usage(input_tokens=7, cache_write_tokens=100, input_tokens_scope="uncached")
+    )
+    assert unknown["totalInputTokens"] is None
 
 
 @pytest.mark.parametrize("name", ["codex", "claude-code", "github-copilot", "antigravity"])

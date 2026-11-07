@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -40,7 +41,9 @@ def setup(tmp_path, monkeypatch):
         (output / "001.png").write_bytes(b"image")
         return [{"image": "001.png", "range": "$A$1:$B$1", "overview": False}]
 
-    def generate(config, evidence, images, usage, logger, *, on_usage, stage="sheet", **kwargs):
+    def generate(
+        config, evidence, images, usage, logger, *, on_usage, stage="sheet", on_output=None, **kwargs
+    ):
         calls.append((stage, evidence))
         on_usage({"inputTokens": 12, "outputTokens": 4, "durationSeconds": 0.1})
         values = {
@@ -49,6 +52,8 @@ def setup(tmp_path, monkeypatch):
         }
         if stage == "sheet":
             values.update(conclusion=None, key_points=[], sections=[])
+        if on_output is not None:
+            on_output(values)
         return render_context(load_context_profile(config, stage=stage), values)
 
     monkeypatch.setattr(context, "render_sheet", render)
@@ -468,9 +473,7 @@ def test_invalid_profile_fails_before_note_or_state_writes(setup):
     assert not output.exists() and not paths.state_path().exists() and not calls
 
 
-def test_custom_templates_invalidate_only_the_relevant_generation_stage(
-    setup, monkeypatch, tmp_path
-):
+def test_custom_templates_rerender_saved_output_without_ai(setup, monkeypatch, tmp_path):
     from tests.test_context_profiles import custom_profile
 
     config, book, output, calls = setup
@@ -478,25 +481,33 @@ def test_custom_templates_invalidate_only_the_relevant_generation_stage(
     monkeypatch.setattr(cli, "load_config", lambda **kwargs: replace(config, context=writing))
     assert pull(book, output, "--context") == 0
     assert "使用profile: custom" in read_note(output).body
+    assert len(calls) == 2
     workbook_template = folder / "workbook-template.md"
     workbook_template.write_text(
         workbook_template.read_text(encoding="utf-8").replace("ブック要約", "全体要約"),
         encoding="utf-8",
     )
     assert pull(book, None, "--context") == 0
-    assert [stage for stage, _ in calls[2:]] == ["workbook"]
+    assert len(calls) == 2
     assert "## 全体要約" in read_note(output).body
     sheet_template = folder / "template.md"
     sheet_template.write_text(
         sheet_template.read_text(encoding="utf-8").replace("シート要約", "シート概要"),
         encoding="utf-8",
     )
-    assert pull(book, None, "--context") == 0
-    assert [stage for stage, _ in calls[3:]] == ["sheet", "workbook"]
-    assert "#### シート概要" in read_note(output).body
     before = output.read_bytes()
     assert pull(book, None, "--context", "--dry-run") == 0
-    assert output.read_bytes() == before and len(calls) == 5
+    assert output.read_bytes() == before and len(calls) == 2
+    assert pull(book, None, "--context") == 0
+    # Re-rendered sheets keep their saved output, so the workbook summary stays cached too.
+    assert len(calls) == 2
+    body = read_note(output).body
+    assert "#### シート概要" in body and "## 全体要約" in body
+    assert "Sheet meaning." in body and "Workbook meaning." in body
+    prompt = folder / "prompt.md"
+    prompt.write_text(prompt.read_text(encoding="utf-8") + "\nBe brief.\n", encoding="utf-8")
+    assert pull(book, None, "--context") == 0
+    assert [stage for stage, _ in calls[2:]] == ["sheet", "workbook"]
 
 
 def test_plain_refresh_keeps_reviewed_context_and_updates_sheet_local_text(setup):
@@ -514,12 +525,56 @@ def test_plain_refresh_keeps_reviewed_context_and_updates_sheet_local_text(setup
     assert pull(book) == 0
     updated = output.read_text(encoding="utf-8")
     assert context.existing_block(updated, "2") == reviewed
-    assert "- 43" in updated and "User annotation." in updated
+    assert "B1: 43" in updated and "User annotation." in updated
     assert len(calls) == count
     assert updated.count("### Data") == updated.count("### Second") == 1
-    assert updated.index("### Data") < updated.index("- 43") < updated.index("### Second")
+    assert updated.index("### Data") < updated.index("B1: 43") < updated.index("### Second")
     assert pull(book, None, "--context", "--sheet", "Second") == 1
     assert output.read_text(encoding="utf-8") == updated
+
+
+def test_each_edit_of_an_unselected_sheet_refreshes_the_workbook_summary(setup):
+    _, book, output, calls = setup
+    add_second_sheet(book)
+    assert pull(book, output, "--context") == 0
+
+    def stages():
+        return [stage for stage, _ in calls]
+
+    assert stages() == ["sheet", "sheet", "workbook"]
+    for edit in ("First review.", "Second review."):
+        text = output.read_text(encoding="utf-8")
+        block = context.existing_block(text, "2")
+        changed = re.sub(r"Sheet meaning\.|First review\.", edit, block, count=1)
+        output.write_text(text.replace(block, changed), encoding="utf-8")
+        assert pull(book, None, "--context", "--sheet", "Data") == 0
+        overview = [item for _, item in calls if item.get("sheet") == "Workbook overview"][-1]
+        assert edit in json.dumps(overview, ensure_ascii=False)
+    assert stages() == ["sheet", "sheet", "workbook", "workbook", "workbook"]
+
+
+def test_renaming_an_unselected_sheet_refreshes_the_workbook_summary(setup):
+    _, book, output, calls = setup
+    add_second_sheet(book)
+    assert pull(book, output, "--context") == 0
+    text = output.read_text(encoding="utf-8")
+    block = context.existing_block(text, "2")
+    output.write_text(text.replace(block, block.replace("Sheet meaning.", "Edited.")), encoding="utf-8")
+    assert pull(book, None, "--context", "--sheet", "Data") == 0
+    count = len(calls)
+    book.write_bytes(
+        rewrite_package(
+            book.read_bytes(),
+            {
+                "xl/workbook.xml": zipfile.ZipFile(book)
+                .read("xl/workbook.xml")
+                .replace(b'name="Second"', b'name="Renamed"')
+            },
+        )
+    )
+    assert pull(book, None, "--context", "--sheet", "Data") == 0
+    assert [stage for stage, _ in calls[count:]] == ["workbook"]
+    assert "Renamed" in json.dumps(calls[-1][1], ensure_ascii=False)
 
 
 @pytest.mark.parametrize("dry_run", [False, True])

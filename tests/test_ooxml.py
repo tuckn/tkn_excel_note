@@ -37,7 +37,7 @@ def test_inspect_reads_metadata_sheets_and_text(tmp_path: Path) -> None:
     assert info.sheets == [
         {"name": "Data", "sheetId": "1", "state": "visible", "path": "xl/worksheets/sheet1.xml"}
     ]
-    assert info.sheet_text["Data"] == ["Catalog entry", "42"]
+    assert info.sheet_text["Data"] == ["A1: Catalog entry | B1: 42"]
     assert len(info.content_fingerprint) == 64
 
 

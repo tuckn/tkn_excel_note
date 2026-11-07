@@ -51,7 +51,7 @@ def test_plain_pull_includes_hidden_sheets_and_distinguishes_empty_from_limit(tm
     add_second_sheet(book, hidden=True)
     source = SourceConfig("example", tmp_path, ("*.xlsx",), tmp_path / "notes")
     info = inspect_workbook(book, source, max_text_chars=3)
-    assert info.sheet_text == {"Data": ["Cat"]}
+    assert info.sheet_text == {"Data": ["A1:"], "Second": ["A1:"]}
     assert info.sheet_text_status == {"Data": "truncated", "Second": "truncated"}
     text = render_note(info, source)
     assert text.count("#### Extracted Text") == 2
@@ -74,10 +74,10 @@ def test_exact_limit_does_not_claim_current_sheet_was_truncated(tmp_path):
         result = read_sheet_text(
             archive,
             [{"name": "Data", "path": "xl/worksheets/sheet1.xml"}],
-            len("Catalog entry42"),
+            len("A1: Catalog entry | B1: 42"),
             statuses=statuses,
         )
-    assert result == {"Data": ["Catalog entry", "42"]}
+    assert result == {"Data": ["A1: Catalog entry | B1: 42"]}
     assert statuses == {"Data": "complete"}
 
 
@@ -94,7 +94,7 @@ def test_plain_note_refresh_keeps_unknown_frontmatter(tmp_path):
     )
     result = render_note(info, source, existing=read_note(note), touch_updated=False)
     assert "customField: keep" in result and "Handwritten text." in result
-    assert "# Manual title" in result and "- Catalog entry" in result
+    assert "# Manual title" in result and "- A1: Catalog entry | B1: 42" in result
     assert "\n## Extracted Text" not in result and "- Old" not in result
     note.write_text(result, encoding="utf-8")
     assert render_note(info, source, existing=read_note(note), touch_updated=False) == result

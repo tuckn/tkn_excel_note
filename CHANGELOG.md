@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- 代理ノートの「Extracted Text」を、ワークシートの1行を1項目とする `セル位置: 値` の形式に変更。数式を値に添え、日付・時刻の表示形式のセルを `2026-01-15` の形で、数値を保存時の誤差を除いた値で出力し、ふりがな（ルビ）を除外。同じ値の省略をやめ、図形・図形グループの文字、画像の代替テキスト、グラフのタイトル、VML のテキストボックス、セルのコメントを位置の順に追加。`sync.max_extracted_text_chars` の上限をブック全体から1シートごとに変更し、前のシートの文字数で後ろのシートが省略されないようにした（非互換変更）。次回の `pull` で、すべての代理ノートの抽出欄が新しい形式に更新されます。
+- `pull --context` / `export --context` で、出力スキーマで検証した AI の出力を画像と同じフォルダの `output.json`（ブック要約は再利用の記録）に保存。テンプレートだけを変更した場合は、AI を呼ばずに表示を作り直す（結果は `rerendered`、`--dry-run` では `would-rerender`）。出力を保存していない既存の説明は、テンプレートを変えても `--force` までそのまま残す（`templateOutdated`）。
+- 説明の再利用の判定から、テンプレート、GenAI Bridge の版・タイムアウト・実行ファイル、上限の設定（`max_cells`・`max_objects`・`max_input_chars`・`max_workbook_mb`・`max_reference_chars`）を除外。シートの同一性は、ブック全体の書式定義ではなく、そのシートが使う書式だけで判定し、ほかのシートの編集で書式が増えても生成し直さない。この変更で判定の記録の形式が変わるため、既存の説明は次回の `pull --context` で一度生成し直します。
+- AI に渡す根拠データに、日付に直した値（`display`）、セルの書式の一覧（`styles`）、セルのコメント（`comments`）、VML のテキストボックスの文字（`legacyShapes`）を追加。既定の文章 profile（`default-ja`・`default-en`、版 1.1）のプロンプトに、罫線・塗り・字下げ・列のずらしで表した表や階層の読み取りと、追加した根拠データの説明を追加。
+- Workbook Map で、VML・OLE オブジェクト・ActiveX コントロールや拡張要素（`extLst`）のあるシートも図形・画像・グラフの数を表示し、数えていない要素を `Notes` に示すよう変更（これまでは `unknown`）。
+- AI の使用量で、キャッシュを除いた入力トークンだけを報告する接続先（Claude Code など）の入力トークン数に、キャッシュの読み込み・書き込みを含める（記録に `totalInputTokens` を追加）。
+
 - 設定形式を `"3.0.0"` に更新。入力ブック側の設定を `sources.<id>.workbooks`（`dir`・`recursive`・`include`・`ignore`）にまとめて `notes` と対にし、`notes.profile` を `notes.template`、`generation.profile_dirs` を `generation.prompt_profile_dirs` に改名。生成の上限（`max_images`・`max_reference_chars` など）は `generation.limits` に、`thumbnails` は `cover.enabled` と `cover.image` に統合。動作に影響しなかった `sync` の4項目（`pull_preserves_user_metadata`・`delete_missing_notes`・`delete_missing_workbooks`・`allow_source_rename`）を廃止（非互換変更）。
 - 以前の設定形式の読み替えを廃止。`"3.0.0"` 以外の `schema_version`、旧キー（`workbooks_dir`・`path`・`notes.root`・`notes.profile`・`thumbnails`・`generation.profile_dirs`・`generation` 直下の上限・`bridge_profile`・`language` など）、リスト形式の `sources` と source 内の `id` はエラーになります。既存の設定ファイルは新しい形式に書き換えてください。`config list --json` の `loaded_sources` から `migrated` を削除。`config list` の出力キー・`--source` 実行時の設定表示・設定エラーの文言も新しいキー名に変わります（非互換変更）。
 - 代理ノートの `type` を、固有名詞の表記どおり引用符なしの `Excel` に変更し、`schemaVersion` を `"4.0.0"` に更新（非互換変更）。読み取りでは以前の `excel` も代理ノートとして認識し、独自の note profile の `type: excel` もそのまま使用可能。`type: excel` で絞り込む外部スクリプトや Bases は `type: Excel` に更新し、既存ノートは `python -m excel_catalog_pipeline.note_migration` で移行してください。

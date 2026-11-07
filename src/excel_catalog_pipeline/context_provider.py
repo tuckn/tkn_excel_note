@@ -42,7 +42,7 @@ def evidence_payload(evidence: dict[str, Any], max_chars: int | None) -> tuple[s
     ordinary = json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
     compact = dict(evidence)
     converted = False
-    for key in ("cells", "objects", "nativeShapes"):
+    for key in ("cells", "objects", "nativeShapes", "comments", "legacyShapes"):
         items = compact.get(key)
         if (
             not isinstance(items, list)
@@ -58,8 +58,8 @@ def evidence_payload(evidence: dict[str, Any], max_chars: int | None) -> tuple[s
         converted = True
     if converted:
         compact["tableEncoding"] = (
-            "In cells, objects and nativeShapes tables, each row follows columns in order; "
-            "null means a field is unavailable."
+            "In cells, objects, nativeShapes, comments and legacyShapes tables, each row follows "
+            "columns in order; null means a field is unavailable."
         )
     compact_payload = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
     use_tables = converted and len(compact_payload) < len(ordinary)
@@ -152,7 +152,25 @@ def usage_fields(usage: Usage) -> dict[str, Any]:
         result[field] = getattr(usage, key)
         known = usage.known_subtotal or usage
         result["known" + field[0].upper() + field[1:]] = getattr(known, key)
+    result["totalInputTokens"] = total_input_tokens(usage)
     return result
+
+
+def total_input_tokens(usage: Usage) -> int | None:
+    """Input tokens including cache reads and writes, whatever scope the provider reports."""
+    if type(usage.input_tokens) is not int:
+        return None
+    if usage.input_tokens_scope != "uncached":
+        return usage.input_tokens
+    parts = (usage.cached_input_tokens, usage.cache_write_tokens)
+    if any(type(value) is not int for value in parts):
+        return None
+    return usage.input_tokens + sum(value for value in parts if type(value) is int)
+
+
+def record_input_tokens(record: dict[str, Any]) -> Any:
+    """Prefer the scope-normalized total; older records only have inputTokens."""
+    return record["totalInputTokens"] if "totalInputTokens" in record else record.get("inputTokens")
 
 
 def _record_fields(record: GenerationRecord) -> dict[str, Any]:
@@ -171,8 +189,10 @@ def usage_summary(record: dict[str, Any]) -> str:
         value = record.get(field)
         return f"{value:,}" if type(value) is int else "unknown"
 
+    total = record_input_tokens(record)
+    shown = f"{total:,}" if type(total) is int else "unknown"
     return (
-        f"input={count('inputTokens')} tokens | output={count('outputTokens')} tokens | "
+        f"input={shown} tokens | output={count('outputTokens')} tokens | "
         f"cached input={count('cachedInputTokens')} tokens | "
         f"reasoning={count('reasoningTokens')} tokens (included in output) | "
         f"duration={record.get('durationSeconds', 0):.1f}s"
@@ -189,6 +209,7 @@ def generate_markdown(
     profile: Profile | None = None,
     stage: str = "sheet",
     on_usage: Callable[[dict[str, Any]], None] | None = None,
+    on_output: Callable[[dict[str, Any]], None] | None = None,
 ) -> str:
     connection = profile if profile is not None else resolve_profile(config)
     payload, ordinary_chars, compact = evidence_payload(evidence, config.max_input_chars)
@@ -254,6 +275,9 @@ def generate_markdown(
         record.update(_record_fields(result.record))
         markdown = render_context(writing, result.data)
         record["status"] = "success"
+        if on_output:
+            # Validated structured output; templates can re-render it without another AI call.
+            on_output(result.data)
         return markdown.strip()
     except GenAIError as exc:
         if exc.record is not None:

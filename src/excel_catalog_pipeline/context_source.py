@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import posixpath
@@ -9,6 +10,17 @@ import re
 import zipfile
 from typing import Any
 from xml.etree import ElementTree as ET
+
+from .adapters.cell_styles import (
+    StyleTable,
+    dxf_references,
+    serial_text,
+    used_style_indices,
+    uses_1904_dates,
+)
+from .adapters.sheet_parts import comments, legacy_shapes, rich_text
+
+__all__ = ["ContextError", "extract_sheet", "rendering_snapshot", "rich_text", "sheet_list"]
 
 S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -31,13 +43,6 @@ def relationships(archive: zipfile.ZipFile, part: str) -> dict[str, str]:
         for node in ET.fromstring(archive.read(location))
         if node.get("TargetMode") != "External"
     }
-
-
-def rich_text(element: ET.Element) -> str:
-    # Descendant t nodes also include rPh (phonetic guides), which are not cell text.
-    return "".join(
-        node.text or "" for node in element.findall(S + "t") + element.findall(S + "r/" + S + "t")
-    )
 
 
 def sheet_list(data: bytes) -> list[dict[str, str]]:
@@ -75,11 +80,16 @@ def extract_sheet(
             else []
         )
         strings = [rich_text(node) for node in shared_entries]
+        styles = StyleTable.read(archive)
+        date1904 = uses_1904_dates(archive)
         cells: list[dict[str, Any]] = []
         used_strings: dict[int, str] = {}
+        cell_styles: set[int] = set()
         for cell in root.iter(S + "c"):
             value = cell.findtext(S + "v", "")
             kind = cell.get("t", "n")
+            style = cell.get("s", "0")
+            display = None
             if kind == "s":
                 index = int(value)
                 value = strings[index]
@@ -87,17 +97,22 @@ def extract_sheet(
             elif kind == "inlineStr":
                 inline = cell.find(S + "is")
                 value = rich_text(inline) if inline is not None else ""
+            elif kind == "n" and value and style.isdigit():
+                display = serial_text(value, styles.kind(int(style), value), date1904=date1904)
             formula = cell.findtext(S + "f")
             if value or formula:
-                cells.append(
-                    {
-                        "cell": cell.get("r"),
-                        "text": value,
-                        "type": kind,
-                        "style": cell.get("s", "0"),
-                        "formula": formula,
-                    }
-                )
+                item: dict[str, Any] = {
+                    "cell": cell.get("r"),
+                    "text": value,
+                    "type": kind,
+                    "style": style,
+                    "formula": formula,
+                }
+                if display is not None:
+                    item["display"] = display
+                cells.append(item)
+                if style.isdigit():
+                    cell_styles.add(int(style))
                 if len(cells) > max_cells:
                     raise ContextError(
                         f"Sheet exceeds generation.limits.max_cells ({max_cells}); no content was truncated"
@@ -130,20 +145,25 @@ def extract_sheet(
                         f"Sheet exceeds generation.limits.max_objects ({max_objects}); no content was truncated"
                     )
         # Hash the selected sheet's complete internal dependency graph. Shared strings
-        # are limited to used entries, so editing unrelated cell strings is inexpensive.
+        # and styles are limited to used entries, so edits elsewhere in the workbook
+        # (new strings, new cell formats) do not mark this sheet as changed.
         digest = hashlib.sha256()
         pending = [sheet["part"]]
-        for global_part in ("xl/styles.xml", "xl/theme/theme1.xml"):
-            if global_part in archive.namelist():
-                pending.append(global_part)
+        if "xl/theme/theme1.xml" in archive.namelist():
+            pending.append("xl/theme/theme1.xml")
         seen: set[str] = set()
+        dxf_ids: set[int] = set()
         while pending:
             part = pending.pop()
-            if part in seen or part not in archive.namelist():
+            if part in seen or part not in archive.namelist() or part == "xl/styles.xml":
                 continue
             seen.add(part)
+            content = archive.read(part)
             digest.update(part.encode())
-            digest.update(archive.read(part))
+            digest.update(content)
+            if part.endswith(".xml"):
+                with contextlib.suppress(ET.ParseError):
+                    dxf_ids |= dxf_references(ET.fromstring(content))
             rel_path = posixpath.join(
                 posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels"
             )
@@ -151,16 +171,18 @@ def extract_sheet(
                 digest.update(archive.read(rel_path))
             pending.extend(sorted(relationships(archive, part).values()))
         digest.update(repr(sorted(used_strings.items())).encode())
+        digest.update(b"styles\0" + styles.identity(used_style_indices(root), dxf_ids))
         digest.update(sheet["name"].encode())
         workbook_properties = ET.fromstring(archive.read("xl/workbook.xml")).find(S + "workbookPr")
         if workbook_properties is not None:
             digest.update(ET.tostring(workbook_properties))
         warnings = []
-        if root.find(S + "legacyDrawing") is not None:
+        legacy = legacy_shapes(archive, sheet["part"], root)
+        if root.find(S + "legacyDrawing") is not None and not legacy:
             warnings.append("Legacy VML drawing text may be available only in rendered images.")
         if sheet["state"] != "visible":
             warnings.append("This worksheet is hidden in the source workbook.")
-        return {
+        result: dict[str, Any] = {
             "sheet": sheet["name"],
             "sheetId": sheet["id"],
             "cells": cells,
@@ -169,6 +191,19 @@ def extract_sheet(
             "warnings": warnings,
             "formulaPolicy": "Saved cached values; no refresh or recalculation requested.",
         }
+        described = {
+            str(index): styles.describe(index)
+            for index in sorted(cell_styles)
+            if styles.describe(index)
+        }
+        if described:
+            result["styles"] = described
+        notes = comments(archive, sheet["part"])
+        if notes:
+            result["comments"] = notes
+        if legacy:
+            result["legacyShapes"] = legacy
+        return result
 
 
 def _xml_attributes(content: bytes, local_name: str, attributes: dict[str, str]) -> bytes:

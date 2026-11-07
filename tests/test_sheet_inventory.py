@@ -110,21 +110,31 @@ def test_group_members_placements_and_defined_tables(tmp_path: Path) -> None:
     assert not result.warnings
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        '<sheetData/><legacyDrawing r:id="legacy"/>',
-        '<sheetData/><drawing r:id="missing"/>',
-        "<sheetData/><extLst/>",
-    ],
-)
-def test_unsupported_and_missing_objects_are_unknown(tmp_path: Path, body: str) -> None:
+def test_missing_drawing_is_unknown(tmp_path: Path) -> None:
     path = create_workbook(tmp_path / "book.xlsx")
-    replace_parts(path, {"xl/worksheets/sheet1.xml": worksheet(body)})
+    replace_parts(path, {"xl/worksheets/sheet1.xml": worksheet('<sheetData/><drawing r:id="missing"/>')})
     result = inspect_workbook(path, source_config(tmp_path), max_text_chars=0).sheet_inventory["1"]
     assert result.shapes is result.images is result.charts is None
     assert result.populated_cells == 0
     assert result.warnings
+
+
+@pytest.mark.parametrize(
+    ("body", "warned"),
+    [
+        ('<sheetData/><legacyDrawing r:id="legacy"/>', True),
+        ("<sheetData/><extLst/>", False),
+    ],
+)
+def test_legacy_and_extension_objects_keep_drawing_counts(
+    tmp_path: Path, body: str, warned: bool
+) -> None:
+    path = create_workbook(tmp_path / "book.xlsx")
+    replace_parts(path, {"xl/worksheets/sheet1.xml": worksheet(body)})
+    result = inspect_workbook(path, source_config(tmp_path), max_text_chars=0).sheet_inventory["1"]
+    assert (result.shapes, result.images, result.charts) == (0, 0, 0)
+    assert bool(result.warnings) is warned
+    assert all("not counted" in warning for warning in result.warnings)
 
 
 @pytest.mark.parametrize("xml", ["<broken", '<chartsheet xmlns="' + S[1:-1] + '"/>'])

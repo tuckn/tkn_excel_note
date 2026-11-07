@@ -14,7 +14,6 @@ import uuid
 import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -23,12 +22,13 @@ from tkn_genai_bridge import Profile
 from .adapters.markdown import discover_notes
 from .adapters.ooxml import content_fingerprint, read_custom_properties
 from .context_layout import arrange_context, sheet_heading
-from .context_profiles import load_context_profile
+from .context_profiles import load_context_profile, render_context
 from .context_provider import (
     atomic_json,
     evidence_payload,
     generate_markdown,
     generation_plan,
+    record_input_tokens,
     resolve_profile,
     utc_now,
 )
@@ -258,6 +258,168 @@ def _prepare_markdown(markdown: str, image_paths: set[str]) -> tuple[str, list[t
     return markdown, converted
 
 
+RENDERING_FIELDS = (
+    "max_images",
+    "tile_width_points",
+    "tile_height_points",
+    "overlap_points",
+    "image_dpi",
+)
+
+
+def _generator_identity(connection: Profile) -> dict[str, Any]:
+    """Settings that change what the model answers; timeouts and credentials do not."""
+    identity: dict[str, Any] = {
+        "provider": connection.provider,
+        "model": connection.model,
+        "reasoningEffort": connection.reasoning_effort,
+        "maxOutputTokens": connection.max_output_tokens,
+    }
+    if connection.provider == "ollama" and connection.ollama is not None:
+        identity["ollama"] = connection.ollama.model_dump(mode="json")
+    if connection.provider == "azure-openai" and connection.azure is not None:
+        identity["azureEndpoint"] = connection.azure.endpoint
+    return identity
+
+
+def _input_key(
+    evidence: dict[str, Any], writing: Any, config: ContextConfig, connection: Profile
+) -> str:
+    """Identify what the AI was given and asked; templates and limits only gate or display it."""
+    return digest(
+        json.dumps(
+            {
+                "version": 2,
+                "sourceFingerprint": evidence["fingerprint"],
+                "promptProfile": writing.name,
+                "promptSha256": writing.prompt_sha256,
+                "schemaSha256": writing.schema_sha256,
+                "referenceSha256": reference_provenance(config)["sha256"],
+                "generator": _generator_identity(connection),
+                "rendering": {field: getattr(config, field) for field in RENDERING_FIELDS},
+            },
+            sort_keys=True,
+        ).encode()
+    )
+
+
+def _sheet_block(
+    sheet: dict[str, str],
+    writing: Any,
+    markdown: str,
+    images: list[dict[str, Any]],
+    record: dict[str, Any],
+) -> str:
+    links = "\n".join(
+        f"- [{image['range']} ({'overview' if image['overview'] else 'detail'})]({image['relativePath']})"
+        for image in images
+    )
+    return (
+        f"<!-- excel-catalog:begin context-{sheet['id']} -->\n"
+        f"### {sheet_heading(sheet['name'])}\n\n{writing.labels['profile']}: {writing.name}\n\n{markdown}\n\n"
+        f"#### {writing.labels['source_images']}\n\n{links}\n\n"
+        f"<!-- Saved-file snapshot SHA256: {record['snapshotSha256']}; generated: {record['generatedAt']}; "
+        f"provider: {record['provider']}; requested model: {record['model'] or 'provider default'}; "
+        f"profile: {writing.name}; version: {writing.version}; profile SHA256: {writing.sha256} -->\n"
+        f"<!-- excel-catalog:end context-{sheet['id']} -->"
+    )
+
+
+def _saved_output(
+    note: Path, state: dict[str, Any]
+) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """Return verified structured AI output and its images, or None when unavailable."""
+    relative, checksum = state.get("outputPath"), state.get("outputSha256")
+    if not isinstance(relative, str) or not isinstance(checksum, str):
+        return None
+    path = (note.parent / relative).resolve()
+    if not path.is_relative_to((note.parent / "img").resolve()) or not path.is_file():
+        return None
+    raw = path.read_bytes()
+    if digest(raw) != checksum:
+        return None
+    try:
+        record = json.loads(raw.decode("utf-8"))
+        evidence = json.loads(path.with_name("evidence.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or not isinstance(record.get("data"), dict):
+        return None
+    images = evidence.get("images") if isinstance(evidence, dict) else None
+    if not isinstance(images, list) or not all(
+        isinstance(image, dict) and isinstance(image.get("relativePath"), str) for image in images
+    ):
+        return None
+    return record, images
+
+
+def _mark_overview_stale(text: str, state_dir: Path, sheet_id: str, writing: Any) -> str:
+    return patch_frontmatter(
+        text,
+        {
+            "contextStatus": "stale",
+            "contextProfiles": _context_profiles(text, state_dir, {sheet_id: writing.name}),
+            "updated": utc_now(),
+        },
+    )
+
+
+def _verified_encoding(
+    note: Path, original: bytes, text: str, workbook: Path, data: bytes
+) -> bytes:
+    """Encode the new note only if neither it nor the workbook changed while working."""
+    if read_shared(workbook) != data:
+        raise ContextError("Workbook changed during generation; run the command again")
+    encoded = (b"\xef\xbb\xbf" if original.startswith(b"\xef\xbb\xbf") else b"") + text.encode(
+        "utf-8"
+    )
+    if note.read_bytes() != original:
+        raise ContextError("Proxy note changed during generation; generated context was not applied")
+    return encoded
+
+
+def _publish_text(note: Path, original: bytes, text: str, workbook: Path, data: bytes) -> None:
+    _replace_note(note, original, _verified_encoding(note, original, text, workbook, data))
+
+
+def _save_generation(
+    destination: Path,
+    relative_dir: Path,
+    images_dir: Path,
+    images: list[dict[str, Any]],
+    evidence: dict[str, Any],
+    output: dict[str, Any] | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Store images, evidence and structured AI output beside the note."""
+    destination.mkdir(parents=True, exist_ok=False)
+    assets: dict[str, str] = {}
+    for image in images:
+        image_path = images_dir / image["image"]
+        shutil.copyfile(image_path, destination / image_path.name)
+        assets[image["relativePath"]] = digest(image_path.read_bytes())
+    atomic_json(destination / "evidence.json", evidence)
+    if output is None:
+        return assets, {}
+    atomic_json(destination / "output.json", output)
+    return assets, {
+        "outputPath": (relative_dir / "output.json").as_posix(),
+        "outputSha256": digest((destination / "output.json").read_bytes()),
+    }
+
+
+def _replace_note(note: Path, original: bytes, encoded: bytes) -> None:
+    temporary_note = note.with_name(f".{note.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary_note.write_bytes(encoded)
+        if note.read_bytes() != original:
+            raise ContextError(
+                "Proxy note changed before publication; generated context was not applied"
+            )
+        temporary_note.replace(note)
+    finally:
+        temporary_note.unlink(missing_ok=True)
+
+
 def build_context(
     source: SourceConfig,
     workbook: Path,
@@ -336,45 +498,60 @@ def build_context(
             result["bridgePlan"] = plan
             result["generator"] = config.generator_id
             result["reference"] = reference_provenance(config)
-            key = digest(
-                json.dumps(
-                    {
-                        "sheet": evidence["fingerprint"],
-                        "config": {
-                            k: v
-                            for k, v in asdict(config).items()
-                            if k
-                            not in {
-                                "genai_profile",
-                                "genai_profiles",
-                                "overrides",
-                                "profile_dirs",
-                                "reference_inputs",
-                                "generator_id",
-                            }
-                        },
-                        "bridge": {
-                            k: plan[k]
-                            for k in (
-                                "bridge_version",
-                                "generation_settings_sha256",
-                                "schema_sha256",
-                            )
-                        },
-                        "contextProfileSha256": writing.sha256,
-                        "referenceSha256": reference_provenance(config)["sha256"],
-                    },
-                    sort_keys=True,
-                ).encode()
-            )
-            if (
+            key = _input_key(evidence, writing, config, connection)
+            unchanged = (
                 not force
-                and old_block
-                and state.get("buildKey") == key
+                and old_block is not None
+                and state.get("inputKey") == key
                 and _assets_intact(note, state)
-            ):
+            )
+            if unchanged and state.get("templateSha256") == writing.template_sha256:
                 result["status"] = "cached"
                 logger.info("Sheet %s: cached; no rendering or AI call (tokens=0).", sheet["name"])
+                continue
+            if unchanged:
+                saved = _saved_output(note, state)
+                if saved is None:
+                    result.update(status="cached", templateOutdated=True)
+                    logger.info(
+                        "Sheet %s: unchanged; kept with an earlier template because its AI output "
+                        "was not saved. Use --force to regenerate it.",
+                        sheet["name"],
+                    )
+                    continue
+                if dry_run:
+                    result["status"] = "would-rerender"
+                    logger.info(
+                        "Sheet %s: would re-render saved AI output with the current template; "
+                        "no AI call.",
+                        sheet["name"],
+                    )
+                    continue
+                record, images = saved
+                markdown = render_context(writing, record["data"]).replace("\r\n", "\n")
+                markdown, _ = _prepare_markdown(
+                    markdown, {image["relativePath"] for image in images}
+                )
+                block = _sheet_block(sheet, writing, markdown, images, record)
+                block_hash = digest(block.encode())
+                newline = "\r\n" if b"\r\n" in original else "\n"
+                new_text = arrange_context(
+                    update_text(text, sheet["id"], block.replace("\n", newline)),
+                    sheet_list(data),
+                    writing,
+                )
+                if include_overview:
+                    new_text = _mark_overview_stale(new_text, state_dir, sheet["id"], writing)
+                _publish_text(note, original, new_text, workbook, data)
+                atomic_json(
+                    state_path,
+                    {**state, "blockSha256": block_hash, **writing.provenance(), "renderedAt": utc_now()},
+                )
+                result["status"] = "rerendered"
+                logger.info(
+                    "Sheet %s: re-rendered saved AI output with the current template; no AI call.",
+                    sheet["name"],
+                )
                 continue
             result["status"] = "planned" if dry_run else "started"
             if dry_run:
@@ -404,6 +581,7 @@ def build_context(
                     image["relativePath"] = (relative_dir / image["image"]).as_posix()
                 evidence["images"] = images
                 usage_path = usage_directory / f"{uuid.uuid4().hex}.json"
+                outputs: list[dict[str, Any]] = []
                 markdown = generate_markdown(
                     config,
                     evidence,
@@ -412,6 +590,7 @@ def build_context(
                     logger,
                     profile=connection,
                     on_usage=records.append,
+                    on_output=outputs.append,
                 )
                 markdown = markdown.replace("\r\n", "\n")
                 markdown, converted = _prepare_markdown(
@@ -427,75 +606,50 @@ def build_context(
                         converted[0][0],
                     )
                 newline = "\r\n" if b"\r\n" in original else "\n"
-                links = "\n".join(
-                    f"- [{image['range']} ({'overview' if image['overview'] else 'detail'})]({image['relativePath']})"
-                    for image in images
-                )
-                heading = sheet_heading(sheet["name"])
-                block = (
-                    f"<!-- excel-catalog:begin context-{sheet['id']} -->\n"
-                    f"### {heading}\n\n{writing.labels['profile']}: {writing.name}\n\n{markdown}\n\n"
-                    f"#### {writing.labels['source_images']}\n\n{links}\n\n"
-                    f"<!-- Saved-file snapshot SHA256: {digest(data)}; generated: {utc_now()}; "
-                    f"provider: {plan['provider']}; requested model: {plan['model'] or 'provider default'}; profile: {writing.name}; version: {writing.version}; profile SHA256: {writing.sha256} -->\n"
-                    f"<!-- excel-catalog:end context-{sheet['id']} -->"
-                )
+                record = {
+                    "stage": "sheet",
+                    "snapshotSha256": digest(data),
+                    "generatedAt": utc_now(),
+                    "provider": plan["provider"],
+                    "model": plan["model"],
+                    "promptSha256": writing.prompt_sha256,
+                    "schemaSha256": writing.schema_sha256,
+                }
+                block = _sheet_block(sheet, writing, markdown, images, record)
                 block_hash = digest(block.encode())
                 block = block.replace("\r\n", "\n").replace("\n", newline)
                 new_text = arrange_context(
                     update_text(text, sheet["id"], block), sheet_list(data), writing
                 )
                 if include_overview:
-                    new_text = patch_frontmatter(
-                        new_text,
-                        {
-                            "contextStatus": "stale",
-                            "contextProfiles": _context_profiles(
-                                new_text, state_dir, {sheet["id"]: writing.name}
-                            ),
-                            "updated": utc_now(),
-                        },
-                    )
-                if read_shared(workbook) != data:
-                    raise ContextError("Workbook changed during generation; run the command again")
-                encoded = (
-                    b"\xef\xbb\xbf" if original.startswith(b"\xef\xbb\xbf") else b""
-                ) + new_text.encode("utf-8")
-                if note.read_bytes() != original:
-                    raise ContextError(
-                        "Proxy note changed during generation; generated context was not applied"
-                    )
-                destination.mkdir(parents=True, exist_ok=False)
-                assets: dict[str, str] = {}
-                for image in images:
-                    image_path = images_dir / image["image"]
-                    shutil.copyfile(image_path, destination / image_path.name)
-                    assets[image["relativePath"]] = digest(image_path.read_bytes())
-                atomic_json(destination / "evidence.json", evidence)
-                temporary_note = note.with_name(f".{note.name}.{uuid.uuid4().hex}.tmp")
-                try:
-                    temporary_note.write_bytes(encoded)
-                    if note.read_bytes() != original:
-                        raise ContextError(
-                            "Proxy note changed before publication; generated context was not applied"
-                        )
-                    temporary_note.replace(note)
-                finally:
-                    temporary_note.unlink(missing_ok=True)
+                    new_text = _mark_overview_stale(new_text, state_dir, sheet["id"], writing)
+                encoded = _verified_encoding(note, original, new_text, workbook, data)
+                assets, saved_output = _save_generation(
+                    destination,
+                    relative_dir,
+                    images_dir,
+                    images,
+                    evidence,
+                    {**record, "data": outputs[-1]} if outputs else None,
+                )
+                _replace_note(note, original, encoded)
                 atomic_json(
                     state_path,
                     {
-                        "buildKey": key,
+                        "inputKey": key,
                         "blockSha256": block_hash,
                         "assets": assets,
+                        **saved_output,
                         "snapshotSha256": digest(data),
                         "sourceFingerprint": evidence["fingerprint"],
                         "generator": config.generator_id,
+                        "provider": plan["provider"],
+                        "model": plan["model"],
                         "reference": reference_provenance(config),
                         **writing.provenance(),
                         "sheet": sheet["name"],
                         "usagePath": str(usage_path),
-                        "generatedAt": utc_now(),
+                        "generatedAt": record["generatedAt"],
                     },
                 )
                 result.update(status="written", imageCount=len(images), usagePath=str(usage_path))
@@ -533,7 +687,10 @@ def build_context(
     error = any(result["status"] == "error" for result in results)
     totals: dict[str, Any] = {"calls": len(records)}
     for field in ("inputTokens", "outputTokens", "cachedInputTokens", "reasoningTokens"):
-        values = [record.get(field) for record in records]
+        values = [
+            record_input_tokens(record) if field == "inputTokens" else record.get(field)
+            for record in records
+        ]
         totals[field] = sum(values) if all(type(value) is int for value in values) else None
     totals["durationSeconds"] = round(
         sum(record.get("durationSeconds", 0) for record in records), 3
@@ -636,7 +793,7 @@ def _build_overview(
         )
     connection = resolve_profile(config)
     writing = load_context_profile(config, stage="workbook")
-    plan = generation_plan(connection, config=config, stage="workbook")
+    generation_plan(connection, config=config, stage="workbook")
     needs_sheets = any(item["status"] == "planned" for item in results)
     result: dict[str, Any] = {"kind": "workbook", "status": "planned", "notePath": str(note)}
     result["removedSheetIds"] = removed_ids
@@ -657,34 +814,67 @@ def _build_overview(
         return
     evidence = {"sheet": "Workbook overview", "notes": notes, "omittedSheets": omitted}
     evidence_payload(evidence, config.max_input_chars)
+    identities = []
+    for item in notes:
+        saved = _read_state(state_dir / f"sheet-{item['sheetId']}.json")
+        current = digest(item["markdown"].replace("\r\n", "\n").encode())
+        # Saved output identifies the text only while the block still matches its record.
+        identity = (
+            saved["outputSha256"]
+            if saved.get("outputSha256") and saved.get("blockSha256") == current
+            else current
+        )
+        identities.append([item["sheetId"], item["sheet"], item["status"], identity])
+    # Sheet identities come from saved AI output, so re-rendering sheets keeps this summary.
     key = digest(
         json.dumps(
             {
-                "evidence": evidence,
-                "profileSha256": writing.sha256,
+                "version": 2,
+                "sheets": identities,
+                "omitted": omitted,
+                "promptProfile": writing.name,
+                "promptSha256": writing.prompt_sha256,
+                "schemaSha256": writing.schema_sha256,
                 "referenceSha256": reference_provenance(config)["sha256"],
-                "bridge": plan,
+                "generator": _generator_identity(connection),
             },
             sort_keys=True,
         ).encode()
     )
-    if not force and old and state.get("buildKey") == key:
+    unchanged = not force and old is not None and state.get("inputKey") == key
+    saved_output = state.get("output") if isinstance(state.get("output"), dict) else None
+    if unchanged and state.get("templateSha256") == writing.template_sha256:
         result["status"] = "cached"
+    elif unchanged and saved_output is None:
+        result.update(status="cached", templateOutdated=True)
     elif dry_run:
+        if unchanged:
+            result["status"] = "would-rerender"
         return
     else:
-        generation_plan(connection, config=config, stage="workbook", check_executable=True)
-        markdown = generate_markdown(
-            config,
-            evidence,
-            [],
-            usage_root / f"{uuid.uuid4().hex}.json",
-            logger,
-            profile=connection,
-            stage="workbook",
-            on_usage=records.append,
-        ).replace("\r\n", "\n")
-        markdown, converted = _prepare_markdown(markdown, set())
+        if unchanged and saved_output is not None:
+            output = saved_output
+            markdown = render_context(writing, output).strip()
+            generated_at = state.get("generatedAt") or utc_now()
+            result["status"] = "rerendered"
+        else:
+            outputs: list[dict[str, Any]] = []
+            generation_plan(connection, config=config, stage="workbook", check_executable=True)
+            markdown = generate_markdown(
+                config,
+                evidence,
+                [],
+                usage_root / f"{uuid.uuid4().hex}.json",
+                logger,
+                profile=connection,
+                stage="workbook",
+                on_usage=records.append,
+                on_output=outputs.append,
+            )
+            output = outputs[-1] if outputs else None
+            generated_at = utc_now()
+            result["status"] = "written"
+        markdown, converted = _prepare_markdown(markdown.replace("\r\n", "\n"), set())
         if converted:
             result["localLinksConverted"] = len(converted)
             logger.warning(
@@ -717,14 +907,16 @@ def _build_overview(
         block = block.replace("\n", newline)
         text = update_text(text, "workbook", block)
         state = {
-            "buildKey": key,
+            "inputKey": key,
             "blockSha256": digest(block.replace("\r\n", "\n").encode()),
-            "generatedAt": utc_now(),
+            "generatedAt": generated_at,
             "generator": config.generator_id,
+            "provider": connection.provider,
+            "model": connection.model,
             "reference": reference_provenance(config),
             **writing.provenance(),
+            **({"output": output} if output is not None else {}),
         }
-        result["status"] = "written"
     if dry_run:
         return
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -773,7 +965,7 @@ def _build_overview(
             temporary.replace(note)
         finally:
             temporary.unlink(missing_ok=True)
-    if result["status"] == "written":
+    if result["status"] in {"written", "rerendered"}:
         atomic_json(state_path, state)
 
 
