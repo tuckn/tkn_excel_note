@@ -88,7 +88,8 @@ def run_ai_pull(
                     if item["status"] == "error"
                 )
             elif any(
-                item["status"] in {"planned", "written", "refreshed", "would-rerender", "rerendered"}
+                item["status"]
+                in {"planned", "written", "refreshed", "would-refresh", "would-rerender", "rerendered"}
                 for item in result["results"]
             ):
                 if action.status in {"unchanged", "push-required"}:

@@ -20,7 +20,7 @@ from .ai_pull import usage_totals
 from .config import ConfigError
 from .context import run_context
 from .context_provider import utc_now
-from .context_source import ContextError, extract_sheet, sheet_list
+from .context_source import ContextError, SheetSkipError, extract_sheet, sheet_list
 from .generation import resolve_generation
 from .models import Action, AppConfig, SourceConfig, WorkbookInfo
 from .note_frontmatter import ExportDumper
@@ -134,12 +134,23 @@ def _render_note(info: WorkbookInfo, data: bytes, config: AppConfig, with_contex
         "<!-- excel-catalog:end workbook-map -->",
         "",
     ]
+    skipped: list[str] = []
     for sheet in sheets:
         if not sheet["part"].startswith("xl/worksheets/"):
             continue
-        evidence = extract_sheet(
-            data, sheet, max_cells=config.context.max_cells, max_objects=config.context.max_objects
-        )
+        try:
+            evidence = extract_sheet(
+                data,
+                sheet,
+                max_cells=config.context.max_cells,
+                max_objects=config.context.max_objects,
+            )
+        except SheetSkipError as exc:
+            skipped.append(sheet["name"])
+            lines.append(
+                managed("sheet-text-" + sheet["id"], "#### Extracted Text\n\nExtraction skipped: " + str(exc))
+            )
+            continue
         lines.extend(
             [
                 "<!-- excel-catalog:begin sheet-text-" + sheet["id"] + " -->",
@@ -171,6 +182,7 @@ def _render_note(info: WorkbookInfo, data: bytes, config: AppConfig, with_contex
                     "#### Extracted Text\n\nExtraction unavailable for this sheet type.",
                 )
             )
+    frontmatter["extractedSheets"] = [name for name in worksheet_names if name not in skipped]
     header = yaml.dump(
         frontmatter, Dumper=ExportDumper, allow_unicode=True, sort_keys=False, width=1000
     )

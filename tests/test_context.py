@@ -18,6 +18,7 @@ from excel_catalog_pipeline.context_profiles import load_context_profile, render
 from excel_catalog_pipeline.context_render import Box, tile_boxes
 from excel_catalog_pipeline.context_source import (
     ContextError,
+    SheetSkipError,
     extract_sheet,
     rendering_snapshot,
     sheet_list,
@@ -83,7 +84,7 @@ def test_tiles_cover_far_right_and_disconnected_regions_without_blank_flood() ->
 
 
 def test_image_limit_fails_instead_of_truncating() -> None:
-    with pytest.raises(ContextError, match="max_images"):
+    with pytest.raises(SheetSkipError, match="max_images"):
         tile_boxes([Box(0, 0, 10000, 10000)], ContextConfig(max_images=2))
 
 
@@ -599,7 +600,7 @@ def test_limits_and_bridge_version_do_not_invalidate_context(build_setup, monkey
     monkeypatch.setattr(context, "generation_plan", newer_bridge)
     result = context.run_context(
         source,
-        ContextConfig(max_cells=20000, max_objects=20000, max_workbook_mb=200),
+        ContextConfig(max_cells=20000, max_objects=20000, max_workbook_mb=200, max_images=30),
         workbook_selector="book.xlsx",
         sheet_names=["Data"],
         all_sheets=False,
@@ -609,6 +610,78 @@ def test_limits_and_bridge_version_do_not_invalidate_context(build_setup, monkey
         logger=LOGGER,
     )
     assert result["results"][0]["status"] == "cached"
+    assert calls == ["Data"]
+
+
+def test_sheet_over_a_limit_is_skipped_without_ai_or_writes(build_setup) -> None:
+    source, _, note, state, calls, _ = build_setup
+    before = note.read_bytes()
+    for dry_run in (True, False):
+        result = context.run_context(
+            source,
+            ContextConfig(max_cells=1),
+            workbook_selector="book.xlsx",
+            sheet_names=["Data"],
+            all_sheets=False,
+            list_only=False,
+            dry_run=dry_run,
+            force=False,
+            logger=LOGGER,
+        )
+        assert result["status"] == "success"
+        assert result["results"][0]["status"] == "skipped"
+        assert "max_cells" in result["results"][0]["message"]
+    assert calls == [] and note.read_bytes() == before
+    assert not list(state.rglob("sheet-*.json"))
+
+
+def test_rendering_limit_skips_the_sheet_without_ai(build_setup, monkeypatch) -> None:
+    _, _, note, _, calls, run = build_setup
+    before = note.read_bytes()
+
+    def too_large(*args, **kwargs):
+        raise SheetSkipError("Rendering exceeds generation.limits.max_images; no AI was called")
+
+    monkeypatch.setattr(context, "render_sheet", too_large)
+    result = run()
+    assert result["status"] == "success"
+    assert result["results"][0]["status"] == "skipped"
+    assert calls == [] and note.read_bytes() == before
+
+
+def test_records_keyed_with_max_images_are_reused_and_upgraded(build_setup) -> None:
+    source, workbook, _, state, calls, run = build_setup
+    assert run()["results"][0]["status"] == "written"
+    path = next(state.rglob("sheet-1.json"))
+    record = json.loads(path.read_text(encoding="utf-8"))
+    data = workbook.read_bytes()
+    evidence = extract_sheet(data, sheet_list(data)[0], max_cells=10000, max_objects=10000)
+    arguments = (evidence, load_context_profile(ContextConfig()), ContextConfig(), Profile())
+    assert record["inputKey"] == context._input_key(*arguments)
+    identity = context._input_identity(*arguments)
+    # Written by the previous version with the default limit of 24 images.
+    legacy = context._key(
+        {**identity, "version": 2, "rendering": {**identity["rendering"], "max_images": 24}}
+    )
+    assert legacy in context._legacy_input_keys(*arguments)
+    assert legacy != record["inputKey"]
+    path.write_text(json.dumps({**record, "inputKey": legacy}), encoding="utf-8")
+    assert run(dry_run=True)["results"][0]["status"] == "cached"
+    assert json.loads(path.read_text(encoding="utf-8"))["inputKey"] == legacy
+    # Raising the limit in the same update still reuses the description.
+    result = context.run_context(
+        source,
+        ContextConfig(max_images=30),
+        workbook_selector="book.xlsx",
+        sheet_names=["Data"],
+        all_sheets=False,
+        list_only=False,
+        dry_run=False,
+        force=False,
+        logger=LOGGER,
+    )
+    assert result["results"][0]["status"] == "cached"
+    assert json.loads(path.read_text(encoding="utf-8"))["inputKey"] == record["inputKey"]
     assert calls == ["Data"]
 
 

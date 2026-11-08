@@ -33,7 +33,13 @@ from .context_provider import (
     utc_now,
 )
 from .context_render import render_sheet
-from .context_source import ContextError, extract_sheet, rendering_snapshot, sheet_list
+from .context_source import (
+    ContextError,
+    SheetSkipError,
+    extract_sheet,
+    rendering_snapshot,
+    sheet_list,
+)
 from .discovery import is_source_path_in_scope
 from .generation import reference_provenance
 from .models import ContextConfig, SourceConfig
@@ -259,7 +265,6 @@ def _prepare_markdown(markdown: str, image_paths: set[str]) -> tuple[str, list[t
 
 
 RENDERING_FIELDS = (
-    "max_images",
     "tile_width_points",
     "tile_height_points",
     "overlap_points",
@@ -282,25 +287,50 @@ def _generator_identity(connection: Profile) -> dict[str, Any]:
     return identity
 
 
+# Version 2 keys also hashed generation.limits.max_images, which config allows from 1 to 100.
+LEGACY_MAX_IMAGES = range(1, 101)
+
+
+def _input_identity(
+    evidence: dict[str, Any], writing: Any, config: ContextConfig, connection: Profile
+) -> dict[str, Any]:
+    return {
+        "sourceFingerprint": evidence["fingerprint"],
+        "promptProfile": writing.name,
+        "promptSha256": writing.prompt_sha256,
+        "schemaSha256": writing.schema_sha256,
+        "referenceSha256": reference_provenance(config)["sha256"],
+        "generator": _generator_identity(connection),
+        "rendering": {field: getattr(config, field) for field in RENDERING_FIELDS},
+    }
+
+
+def _key(identity: dict[str, Any]) -> str:
+    return digest(json.dumps(identity, sort_keys=True).encode())
+
+
 def _input_key(
     evidence: dict[str, Any], writing: Any, config: ContextConfig, connection: Profile
 ) -> str:
     """Identify what the AI was given and asked; templates and limits only gate or display it."""
-    return digest(
-        json.dumps(
+    return _key({"version": 3, **_input_identity(evidence, writing, config, connection)})
+
+
+def _legacy_input_keys(
+    evidence: dict[str, Any], writing: Any, config: ContextConfig, connection: Profile
+) -> set[str]:
+    """Version 2 keys for the same input, one per possible max_images value."""
+    identity = _input_identity(evidence, writing, config, connection)
+    return {
+        _key(
             {
+                **identity,
                 "version": 2,
-                "sourceFingerprint": evidence["fingerprint"],
-                "promptProfile": writing.name,
-                "promptSha256": writing.prompt_sha256,
-                "schemaSha256": writing.schema_sha256,
-                "referenceSha256": reference_provenance(config)["sha256"],
-                "generator": _generator_identity(connection),
-                "rendering": {field: getattr(config, field) for field in RENDERING_FIELDS},
-            },
-            sort_keys=True,
-        ).encode()
-    )
+                "rendering": {**identity["rendering"], "max_images": limit},
+            }
+        )
+        for limit in LEGACY_MAX_IMAGES
+    }
 
 
 def _sheet_block(
@@ -451,16 +481,26 @@ def build_context(
     if include_overview:
         load_context_profile(config, stage="workbook")
     # Validate all requested sheets before any rendering, paid call, or persistent write.
-    prepared = [
-        extract_sheet(data, sheet, max_cells=config.max_cells, max_objects=config.max_objects)
-        for sheet in selected
-    ]
-    for evidence in prepared:
-        evidence_payload(evidence, config.max_input_chars)
+    # A sheet over a per-sheet limit is skipped; any other problem stops the workbook.
+    prepared: list[dict[str, Any] | SheetSkipError] = []
+    for sheet in selected:
+        try:
+            evidence = extract_sheet(
+                data, sheet, max_cells=config.max_cells, max_objects=config.max_objects
+            )
+            evidence_payload(evidence, config.max_input_chars)
+        except SheetSkipError as exc:
+            prepared.append(exc)
+        else:
+            prepared.append(evidence)
     logger.info(
         "Reading a saved-file snapshot; unsaved edits in Excel are not included. SHA256=%s",
         digest(data),
     )
+
+    def skip(result: dict[str, Any], exc: SheetSkipError) -> None:
+        result.update(status="skipped", message=str(exc))
+        logger.warning("Sheet %s: skipped; %s", result["sheet"], exc)
 
     def run() -> None:
         connection: Profile | None = None
@@ -492,6 +532,9 @@ def build_context(
                     sheet["name"],
                 )
                 continue
+            if isinstance(evidence, SheetSkipError):
+                skip(result, evidence)
+                continue
             if connection is None:
                 connection = resolve_profile(config)
                 plan = generation_plan(connection, config=config)
@@ -499,6 +542,12 @@ def build_context(
             result["generator"] = config.generator_id
             result["reference"] = reference_provenance(config)
             key = _input_key(evidence, writing, config, connection)
+            if state.get("inputKey") not in {None, key} and state.get(
+                "inputKey"
+            ) in _legacy_input_keys(evidence, writing, config, connection):
+                state = {**state, "inputKey": key}
+                if not dry_run:
+                    atomic_json(state_path, state)
             unchanged = (
                 not force
                 and old_block is not None
@@ -570,7 +619,11 @@ def build_context(
                 snapshot.write_bytes(rendering_snapshot(data))
                 images_dir = working / "images"
                 logger.info("Rendering sheet %s with native Excel.", sheet["name"])
-                images = render_sheet(snapshot, evidence, images_dir, config)
+                try:
+                    images = render_sheet(snapshot, evidence, images_dir, config)
+                except SheetSkipError as exc:
+                    skip(result, exc)
+                    continue
                 snapshot.unlink()
                 generation = f"{key[:12]}-{uuid.uuid4().hex[:8]}"
                 relative_dir = Path("img") / book_key / f"sheet-{sheet['id']}" / generation
@@ -582,16 +635,21 @@ def build_context(
                 evidence["images"] = images
                 usage_path = usage_directory / f"{uuid.uuid4().hex}.json"
                 outputs: list[dict[str, Any]] = []
-                markdown = generate_markdown(
-                    config,
-                    evidence,
-                    [images_dir / image["image"] for image in images],
-                    usage_path,
-                    logger,
-                    profile=connection,
-                    on_usage=records.append,
-                    on_output=outputs.append,
-                )
+                try:
+                    markdown = generate_markdown(
+                        config,
+                        evidence,
+                        [images_dir / image["image"] for image in images],
+                        usage_path,
+                        logger,
+                        profile=connection,
+                        on_usage=records.append,
+                        on_output=outputs.append,
+                    )
+                except SheetSkipError as exc:
+                    # Raised while checking the evidence with image metadata, before the call.
+                    skip(result, exc)
+                    continue
                 markdown = markdown.replace("\r\n", "\n")
                 markdown, converted = _prepare_markdown(
                     markdown, {image["relativePath"] for image in images}
@@ -811,6 +869,34 @@ def _build_overview(
     )
     if dry_run and needs_sheets:
         result["plannedSheets"] = [sheet["name"] for sheet in selected]
+        return
+    if not notes:
+        result.update(status="skipped", message="No sheet description to summarize; no AI was called")
+        logger.warning("Workbook overview: skipped; no sheet description to summarize.")
+        # A generated summary of sheets that no longer have descriptions is retired too.
+        if old is not None and state.get("origin") != "import":
+            text = block_pattern("workbook").sub("", text, count=1)
+        text = arrange_context(text, sheets, load_context_profile(config))
+        text = patch_frontmatter(
+            text,
+            {
+                "contextStatus": "not-generated",
+                "contextProfiles": _context_profiles(text, state_dir, {}),
+                "contextAnalyzedSheets": [],
+                "contextOmittedSheets": omitted,
+                "contextStaleSheets": [],
+                "contextUnverifiedSheets": [],
+            },
+        )
+        if text == original.decode("utf-8-sig"):
+            return
+        # Retired blocks or the omitted list change the note, so report it as a change.
+        result["status"] = "would-refresh" if dry_run else "refreshed"
+        if dry_run:
+            return
+        _publish_text(
+            note, original, patch_frontmatter(text, {"updated": utc_now()}), workbook, data
+        )
         return
     evidence = {"sheet": "Workbook overview", "notes": notes, "omittedSheets": omitted}
     evidence_payload(evidence, config.max_input_chars)

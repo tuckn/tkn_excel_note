@@ -32,6 +32,13 @@ class ContextError(ValueError):
     """A context build cannot safely continue."""
 
 
+class SheetSkipError(ContextError):
+    """One sheet exceeds a per-sheet limit or has nothing to render; no AI was called.
+
+    The other sheets and the workbook summary can still be generated.
+    """
+
+
 def relationships(archive: zipfile.ZipFile, part: str) -> dict[str, str]:
     location = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
     if location not in archive.namelist():
@@ -114,7 +121,7 @@ def extract_sheet(
                 if style.isdigit():
                     cell_styles.add(int(style))
                 if len(cells) > max_cells:
-                    raise ContextError(
+                    raise SheetSkipError(
                         f"Sheet exceeds generation.limits.max_cells ({max_cells}); no content was truncated"
                     )
         objects: list[dict[str, Any]] = []
@@ -141,7 +148,7 @@ def extract_sheet(
                     }
                 )
                 if len(objects) > max_objects:
-                    raise ContextError(
+                    raise SheetSkipError(
                         f"Sheet exceeds generation.limits.max_objects ({max_objects}); no content was truncated"
                     )
         # Hash the selected sheet's complete internal dependency graph. Shared strings

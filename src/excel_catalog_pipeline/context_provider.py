@@ -24,7 +24,7 @@ from tkn_genai_bridge import (
 
 from .config import _deep_merge
 from .context_profiles import load_context_profile, render_context
-from .context_source import ContextError
+from .context_source import ContextError, SheetSkipError
 from .generation import reference_prompt, reference_provenance
 from .models import ContextConfig
 
@@ -66,7 +66,7 @@ def evidence_payload(evidence: dict[str, Any], max_chars: int | None) -> tuple[s
     payload = compact_payload if use_tables else ordinary
     if max_chars is not None and len(payload) > max_chars:
         encoding = "column tables" if use_tables else "ordinary JSON"
-        raise ContextError(
+        raise SheetSkipError(
             f"Evidence requires {len(payload):,} characters using {encoding} "
             f"(ordinary JSON: {len(ordinary):,}); generation.limits.max_input_chars={max_chars:,}. "
             "No AI was called or content truncated."

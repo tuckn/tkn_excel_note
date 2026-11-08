@@ -15,6 +15,7 @@ import excel_catalog_pipeline.paths as paths
 from excel_catalog_pipeline.adapters.markdown import read_note
 from excel_catalog_pipeline.adapters.ooxml import read_core_properties
 from excel_catalog_pipeline.context_profiles import load_context_profile, render_context
+from excel_catalog_pipeline.context_source import SheetSkipError
 from excel_catalog_pipeline.models import AppConfig, SourceConfig, SyncConfig
 from tests.helpers import create_workbook
 from tests.test_context import rewrite_package
@@ -292,6 +293,73 @@ def test_hidden_sheet_is_omitted_until_explicitly_selected(setup):
     assert note.frontmatter["contextStatus"] == "current"
     assert note.frontmatter["contextAnalyzedSheets"] == ["Data", "Second"]
     assert len(calls) == 4
+
+
+def test_sheet_over_a_limit_is_skipped_and_the_rest_continue(setup, monkeypatch):
+    _, book, output, calls = setup
+    add_second_sheet(book)
+    real_render = context.render_sheet
+
+    def render(snapshot, evidence, images, config):
+        if evidence["sheet"] == "Data":
+            raise SheetSkipError("Rendering exceeds generation.limits.max_images; no AI was called")
+        return real_render(snapshot, evidence, images, config)
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    assert pull(book, output, "--context") == 0
+    note = read_note(output)
+    assert [(stage, evidence["sheet"]) for stage, evidence in calls] == [
+        ("sheet", "Second"),
+        ("workbook", "Workbook overview"),
+    ]
+    assert calls[1][1]["omittedSheets"] == ["Data"]
+    assert note.frontmatter["contextStatus"] == "partial"
+    assert note.frontmatter["contextOmittedSheets"] == ["Data"]
+    assert "Workbook meaning." in note.body
+
+
+def test_workbook_summary_is_skipped_when_every_sheet_is_skipped(setup, monkeypatch):
+    _, book, output, calls = setup
+
+    def render(*args, **kwargs):
+        raise SheetSkipError("Selected worksheet has no visible cells or shapes to render")
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    assert pull(book, output, "--context") == 0
+    note = read_note(output)
+    assert calls == []
+    assert note.frontmatter["contextStatus"] == "not-generated"
+    assert note.frontmatter["contextOmittedSheets"] == ["Data"]
+    assert "context-workbook" not in note.body
+    before = output.read_bytes()
+    assert pull(book, None, "--context") == 0
+    assert output.read_bytes() == before
+
+
+def test_skipped_sheets_still_retire_removed_context_and_the_summary(setup, monkeypatch, capsys):
+    _, book, output, calls = setup
+    add_second_sheet(book)
+    assert pull(book, output, "--context", "--sheet", "Second") == 0
+    assert "context-2" in output.read_text(encoding="utf-8")
+    create_workbook(book)
+
+    def render(*args, **kwargs):
+        raise SheetSkipError("Selected worksheet has no visible cells or shapes to render")
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    capsys.readouterr()
+    assert pull(book, None, "--context", "--dry-run") == 0
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["results"][0]["status"] == "would-update"
+    assert pull(book, None, "--context") == 0
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["results"][0]["status"] == "updated" and applied["changed"] == 1
+    note = read_note(output)
+    assert "context-2" not in note.body and "context-workbook" not in note.body
+    assert note.frontmatter["contextStatus"] == "not-generated"
+    assert note.frontmatter["contextAnalyzedSheets"] == []
+    assert note.frontmatter["contextOmittedSheets"] == ["Data"]
+    assert [stage for stage, _ in calls] == ["sheet", "workbook"]
 
 
 @pytest.mark.parametrize("edited", [False, True])

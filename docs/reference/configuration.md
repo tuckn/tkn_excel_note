@@ -305,9 +305,11 @@ BOM 付きでも読み込めます。
 | `max_workbook_mb` | `100` | 入力ブックのファイルサイズの上限です。単位は MiB（1024 × 1024 バイト）です。シート方式の cover にも適用します。 |
 
 `max_input_chars` 以外の数値は、正の整数で指定します。
-上限を超えた場合は、対象を切り詰めずにエラーとして停止します。
-`max_cells`・`max_objects`・`max_input_chars`・`max_workbook_mb`・`max_reference_chars` を変えても、`pull` は前回の説明を再利用します。
-画像化の設定（`max_images`・タイルの大きさ・重なり・解像度）を変えると、AI に渡す画像が変わるため、次の `pull --context` で生成し直します。
+上限を超えた場合は、対象を切り詰めません。
+1シートあたりの上限（`max_images`・`max_cells`・`max_objects`・`max_input_chars`）を超えたシートは、AI を呼ばずにそのシートだけを飛ばし、残りのシートの生成を続けます。
+`max_workbook_mb` と `max_reference_chars` を超えた場合は、そのブックの生成を止めます。
+上限（`max_images`・`max_cells`・`max_objects`・`max_input_chars`・`max_workbook_mb`・`max_reference_chars`）を変えても、`pull` は前回の説明を再利用します。
+画像化の設定（タイルの大きさ・重なり・解像度）を変えると、AI に渡す画像が変わるため、次の `pull --context` で生成し直します。
 
 `max_input_chars` は、根拠データの JSON の文字数だけに適用し、画像とプロンプトの固定部分は含みません。
 根拠データは、通常の JSON より短くなる場合、列名を一度だけ書く表形式で送ります。

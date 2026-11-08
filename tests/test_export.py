@@ -149,6 +149,17 @@ def test_context_export_quotes_added_timestamps_and_fingerprint(environment):
     assert all(isinstance(loaded[key], str) for key in ("updated", "contextGeneratedAt"))
 
 
+def test_context_export_skips_a_sheet_over_the_cell_limit(environment, monkeypatch):
+    config, book, calls = environment
+    limited = replace(config, context=replace(config.context, max_cells=1))
+    monkeypatch.setattr(cli, "load_config", lambda **kwargs: limited)
+    assert cli.main(["--json", "export", str(book), "--context"]) == 0
+    text = book.with_name(book.name + ".md").read_text(encoding="utf-8")
+    assert "Extraction skipped: Sheet exceeds generation.limits.max_cells (1)" in text
+    assert yaml.safe_load(text.split("---\n")[1])["extractedSheets"] == []
+    assert calls == []
+
+
 def test_recursive_folder_export_and_single_output(environment, tmp_path, capsys):
     _, book, _ = environment
     other = create_workbook(book.parent / "nested" / "other.xlsm", macro_enabled=True)
