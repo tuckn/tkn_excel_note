@@ -649,7 +649,8 @@ def test_rendering_limit_skips_the_sheet_without_ai(build_setup, monkeypatch) ->
     assert calls == [] and note.read_bytes() == before
 
 
-def test_records_keyed_with_max_images_are_reused_and_upgraded(build_setup) -> None:
+@pytest.mark.parametrize("version", [2, 3])
+def test_earlier_records_are_reused_and_upgraded(build_setup, version) -> None:
     source, workbook, _, state, calls, run = build_setup
     assert run()["results"][0]["status"] == "written"
     path = next(state.rglob("sheet-1.json"))
@@ -658,16 +659,22 @@ def test_records_keyed_with_max_images_are_reused_and_upgraded(build_setup) -> N
     evidence = extract_sheet(data, sheet_list(data)[0], max_cells=10000, max_objects=10000)
     arguments = (evidence, load_context_profile(ContextConfig()), ContextConfig(), Profile())
     assert record["inputKey"] == context._input_key(*arguments)
-    identity = context._input_identity(*arguments)
-    # Written by the previous version with the default limit of 24 images.
-    legacy = context._key(
-        {**identity, "version": 2, "rendering": {**identity["rendering"], "max_images": 24}}
-    )
-    assert legacy in context._legacy_input_keys(*arguments)
+    assert record["sourceFingerprint"] == evidence["fingerprint"]
+    # Earlier versions hashed the saved sheet XML; version 2 also hashed 24 images.
+    identity = {
+        **context._input_identity(*arguments),
+        "sourceFingerprint": evidence["legacyFingerprint"],
+        "version": version,
+    }
+    if version == 2:
+        identity["rendering"] = {**identity["rendering"], "max_images": 24}
+    legacy = context._key(identity)
+    assert legacy in context._legacy_input_keys(*arguments, evidence["legacyFingerprint"])
     assert legacy != record["inputKey"]
-    path.write_text(json.dumps({**record, "inputKey": legacy}), encoding="utf-8")
+    earlier = {**record, "inputKey": legacy, "sourceFingerprint": evidence["legacyFingerprint"]}
+    path.write_text(json.dumps(earlier), encoding="utf-8")
     assert run(dry_run=True)["results"][0]["status"] == "cached"
-    assert json.loads(path.read_text(encoding="utf-8"))["inputKey"] == legacy
+    assert json.loads(path.read_text(encoding="utf-8")) == earlier
     # Raising the limit in the same update still reuses the description.
     result = context.run_context(
         source,
@@ -681,8 +688,25 @@ def test_records_keyed_with_max_images_are_reused_and_upgraded(build_setup) -> N
         logger=LOGGER,
     )
     assert result["results"][0]["status"] == "cached"
-    assert json.loads(path.read_text(encoding="utf-8"))["inputKey"] == record["inputKey"]
+    upgraded = json.loads(path.read_text(encoding="utf-8"))
+    assert upgraded["inputKey"] == record["inputKey"]
+    assert upgraded["sourceFingerprint"] == record["sourceFingerprint"]
     assert calls == ["Data"]
+
+
+def test_summary_treats_an_earlier_fingerprint_as_current(build_setup) -> None:
+    _, workbook, note, state, _, run = build_setup
+    run()
+    path = next(state.rglob("sheet-1.json"))
+    data = workbook.read_bytes()
+    evidence = extract_sheet(data, sheet_list(data)[0], max_cells=10000, max_objects=10000)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(
+        json.dumps({**record, "sourceFingerprint": evidence["legacyFingerprint"]}), encoding="utf-8"
+    )
+    text = note.read_bytes().decode("utf-8-sig")
+    notes = context._collect_context(text, note, data, ContextConfig(), path.parent)
+    assert [item["status"] for item in notes] == ["current"]
 
 
 def test_generator_identity_keeps_answer_settings_but_not_timeouts() -> None:

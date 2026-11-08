@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import zipfile
 from pathlib import Path
 
@@ -198,6 +199,42 @@ def test_evidence_describes_used_styles_dates_and_comments(tmp_path: Path) -> No
     assert evidence["comments"] == [{"cell": "B1", "text": "Checked date"}]
     assert evidence["legacyShapes"] == [{"cell": "D7", "kind": "Text", "text": "Legacy box"}]
     assert not any("Legacy VML" in warning for warning in evidence["warnings"])
+
+
+FROZEN = '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+
+
+def with_view(data: bytes, view: str) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        sheet = archive.read("xl/worksheets/sheet1.xml").decode()
+    sheet = sheet.replace("<sheetData>", "<sheetViews>" + view + "</sheetViews><sheetData>", 1)
+    return rewrite_package(data, {"xl/worksheets/sheet1.xml": sheet.encode()})
+
+
+def test_fingerprint_ignores_view_state_but_not_display_settings(tmp_path: Path) -> None:
+    data = create_workbook(tmp_path / "book.xlsx").read_bytes()
+    sheet = sheet_list(data)[0]
+
+    def fingerprints(view: str) -> tuple[str, str]:
+        evidence = extract_sheet(with_view(data, view), sheet, max_cells=100, max_objects=100)
+        return evidence["fingerprint"], evidence["legacyFingerprint"]
+
+    base = fingerprints(f'<sheetView workbookViewId="0">{FROZEN}</sheetView>')
+    browsed = fingerprints(
+        '<sheetView tabSelected="1" zoomScale="85" zoomScaleNormal="85" topLeftCell="B20" '
+        'view="pageBreakPreview" workbookViewId="0">'
+        '<pane ySplit="1" topLeftCell="A40" activePane="bottomRight" state="frozen"/>'
+        '<selection pane="bottomLeft" activeCell="C41" sqref="C41"/></sheetView>'
+    )
+    assert browsed[0] == base[0]
+    # The saved XML did change, as earlier versions saw it.
+    assert browsed[1] != base[1]
+    for changed in (
+        f'<sheetView showFormulas="1" workbookViewId="0">{FROZEN}</sheetView>',
+        f'<sheetView showZeros="0" workbookViewId="0">{FROZEN}</sheetView>',
+        '<sheetView workbookViewId="0"/>',
+    ):
+        assert fingerprints(changed)[0] != base[0], changed
 
 
 def test_fingerprint_ignores_styles_used_only_elsewhere(tmp_path: Path) -> None:

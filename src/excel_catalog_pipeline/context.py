@@ -287,7 +287,8 @@ def _generator_identity(connection: Profile) -> dict[str, Any]:
     return identity
 
 
-# Version 2 keys also hashed generation.limits.max_images, which config allows from 1 to 100.
+# Versions 2 and 3 hashed the saved sheet XML with its view state (legacyFingerprint);
+# version 2 also hashed generation.limits.max_images, which config allows from 1 to 100.
 LEGACY_MAX_IMAGES = range(1, 101)
 
 
@@ -313,15 +314,22 @@ def _input_key(
     evidence: dict[str, Any], writing: Any, config: ContextConfig, connection: Profile
 ) -> str:
     """Identify what the AI was given and asked; templates and limits only gate or display it."""
-    return _key({"version": 3, **_input_identity(evidence, writing, config, connection)})
+    return _key({"version": 4, **_input_identity(evidence, writing, config, connection)})
 
 
 def _legacy_input_keys(
-    evidence: dict[str, Any], writing: Any, config: ContextConfig, connection: Profile
+    evidence: dict[str, Any],
+    writing: Any,
+    config: ContextConfig,
+    connection: Profile,
+    legacy_fingerprint: str,
 ) -> set[str]:
-    """Version 2 keys for the same input, one per possible max_images value."""
-    identity = _input_identity(evidence, writing, config, connection)
-    return {
+    """Earlier keys for the same input: version 3, and version 2 per max_images value."""
+    identity = {
+        **_input_identity(evidence, writing, config, connection),
+        "sourceFingerprint": legacy_fingerprint,
+    }
+    return {_key({**identity, "version": 3})} | {
         _key(
             {
                 **identity,
@@ -483,11 +491,14 @@ def build_context(
     # Validate all requested sheets before any rendering, paid call, or persistent write.
     # A sheet over a per-sheet limit is skipped; any other problem stops the workbook.
     prepared: list[dict[str, Any] | SheetSkipError] = []
+    legacy_fingerprints: dict[str, str] = {}
     for sheet in selected:
         try:
             evidence = extract_sheet(
                 data, sheet, max_cells=config.max_cells, max_objects=config.max_objects
             )
+            # Kept apart so it is neither sent to the AI nor saved as evidence.
+            legacy_fingerprints[sheet["id"]] = evidence.pop("legacyFingerprint")
             evidence_payload(evidence, config.max_input_chars)
         except SheetSkipError as exc:
             prepared.append(exc)
@@ -544,8 +555,10 @@ def build_context(
             key = _input_key(evidence, writing, config, connection)
             if state.get("inputKey") not in {None, key} and state.get(
                 "inputKey"
-            ) in _legacy_input_keys(evidence, writing, config, connection):
-                state = {**state, "inputKey": key}
+            ) in _legacy_input_keys(
+                evidence, writing, config, connection, legacy_fingerprints[sheet["id"]]
+            ):
+                state = {**state, "inputKey": key, "sourceFingerprint": evidence["fingerprint"]}
                 if not dry_run:
                     atomic_json(state_path, state)
             unchanged = (
@@ -780,11 +793,8 @@ def _collect_context(
                     evidence = extract_sheet(
                         data, sheet, max_cells=config.max_cells, max_objects=config.max_objects
                     )
-                    status = (
-                        "current"
-                        if evidence["fingerprint"] == saved["sourceFingerprint"]
-                        else "stale"
-                    )
+                    fingerprints = {evidence["fingerprint"], evidence["legacyFingerprint"]}
+                    status = "current" if saved["sourceFingerprint"] in fingerprints else "stale"
                 except ContextError:
                     status = "unverified"
             elif saved.get("snapshotSha256") == digest(data):

@@ -318,6 +318,30 @@ def test_sheet_over_a_limit_is_skipped_and_the_rest_continue(setup, monkeypatch)
     assert "Workbook meaning." in note.body
 
 
+def test_browsing_and_saving_a_workbook_does_not_regenerate_context(setup):
+    _, book, output, calls = setup
+
+    def save_view(view):
+        with zipfile.ZipFile(book) as archive:
+            sheet = archive.read("xl/worksheets/sheet1.xml").decode()
+        sheet = re.sub(r"<sheetViews>.*?</sheetViews>", "", sheet)
+        sheet = sheet.replace("<sheetData>", f"<sheetViews>{view}</sheetViews><sheetData>", 1)
+        book.write_bytes(
+            rewrite_package(book.read_bytes(), {"xl/worksheets/sheet1.xml": sheet.encode()})
+        )
+
+    save_view('<sheetView workbookViewId="0"/>')
+    assert pull(book, output, "--context") == 0
+    assert len(calls) == 2
+    save_view(
+        '<sheetView tabSelected="1" zoomScale="70" workbookViewId="0">'
+        '<selection activeCell="B1" sqref="B1"/></sheetView>'
+    )
+    assert pull(book, None, "--context") == 0
+    assert len(calls) == 2
+    assert read_note(output).frontmatter["contextStatus"] == "current"
+
+
 def test_workbook_summary_is_skipped_when_every_sheet_is_skipped(setup, monkeypatch):
     _, book, output, calls = setup
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import io
 import posixpath
@@ -74,9 +75,44 @@ def sheet_list(data: bytes) -> list[dict[str, str]]:
         return result
 
 
+# Saving after browsing changes these, but they affect neither images nor values.
+VIEW_STATE_ATTRIBUTES = (
+    "tabSelected",
+    "topLeftCell",
+    "view",
+    "zoomScale",
+    "zoomScaleNormal",
+    "zoomScalePageLayoutView",
+    "zoomScaleSheetLayoutView",
+)
+PANE_STATE_ATTRIBUTES = ("topLeftCell", "activePane")
+
+
+def without_view_state(root: ET.Element) -> bytes:
+    """Serialize a worksheet without its selected tab, selection, scroll position and zoom."""
+    views = root.find(S + "sheetViews")
+    if views is None:
+        return ET.tostring(root)
+    neutral = copy.deepcopy(root)
+    for view in neutral.iter(S + "sheetView"):
+        for name in VIEW_STATE_ATTRIBUTES:
+            view.attrib.pop(name, None)
+        for selection in view.findall(S + "selection"):
+            view.remove(selection)
+        for pane in view.findall(S + "pane"):
+            for name in PANE_STATE_ATTRIBUTES:
+                pane.attrib.pop(name, None)
+    return ET.tostring(neutral)
+
+
 def extract_sheet(
     data: bytes, sheet: dict[str, str], *, max_cells: int, max_objects: int
 ) -> dict[str, Any]:
+    """Cells, drawings and fingerprints of one worksheet.
+
+    `fingerprint` ignores view state; `legacyFingerprint` hashes the saved XML as it is,
+    as earlier versions did, so their records can still be recognized.
+    """
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         if not sheet["part"].startswith("xl/worksheets/"):
             raise ContextError(f"Only worksheets are supported: {sheet['name']}")
@@ -155,6 +191,11 @@ def extract_sheet(
         # and styles are limited to used entries, so edits elsewhere in the workbook
         # (new strings, new cell formats) do not mark this sheet as changed.
         digest = hashlib.sha256()
+        legacy_digest = hashlib.sha256()
+
+        def update(chunk: bytes, legacy_chunk: bytes | None = None) -> None:
+            digest.update(chunk)
+            legacy_digest.update(chunk if legacy_chunk is None else legacy_chunk)
         pending = [sheet["part"]]
         if "xl/theme/theme1.xml" in archive.namelist():
             pending.append("xl/theme/theme1.xml")
@@ -166,8 +207,11 @@ def extract_sheet(
                 continue
             seen.add(part)
             content = archive.read(part)
-            digest.update(part.encode())
-            digest.update(content)
+            update(part.encode())
+            if part == sheet["part"]:
+                update(without_view_state(root), content)
+            else:
+                update(content)
             if part.endswith(".xml"):
                 with contextlib.suppress(ET.ParseError):
                     dxf_ids |= dxf_references(ET.fromstring(content))
@@ -175,14 +219,14 @@ def extract_sheet(
                 posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels"
             )
             if rel_path in archive.namelist():
-                digest.update(archive.read(rel_path))
+                update(archive.read(rel_path))
             pending.extend(sorted(relationships(archive, part).values()))
-        digest.update(repr(sorted(used_strings.items())).encode())
-        digest.update(b"styles\0" + styles.identity(used_style_indices(root), dxf_ids))
-        digest.update(sheet["name"].encode())
+        update(repr(sorted(used_strings.items())).encode())
+        update(b"styles\0" + styles.identity(used_style_indices(root), dxf_ids))
+        update(sheet["name"].encode())
         workbook_properties = ET.fromstring(archive.read("xl/workbook.xml")).find(S + "workbookPr")
         if workbook_properties is not None:
-            digest.update(ET.tostring(workbook_properties))
+            update(ET.tostring(workbook_properties))
         warnings = []
         legacy = legacy_shapes(archive, sheet["part"], root)
         if root.find(S + "legacyDrawing") is not None and not legacy:
@@ -195,6 +239,7 @@ def extract_sheet(
             "cells": cells,
             "objects": objects,
             "fingerprint": digest.hexdigest(),
+            "legacyFingerprint": legacy_digest.hexdigest(),
             "warnings": warnings,
             "formulaPolicy": "Saved cached values; no refresh or recalculation requested.",
         }
