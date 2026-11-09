@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import pickle
 import zipfile
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from excel_catalog_pipeline.adapters.markdown import note_path, render_note
 from excel_catalog_pipeline.adapters.ooxml import inspect_workbook
 from excel_catalog_pipeline.config import DEFAULT_CONFIG, ConfigError, validate_config
 from excel_catalog_pipeline.context_profiles import load_context_profile, render_context
-from excel_catalog_pipeline.context_render import Box, tile_boxes
+from excel_catalog_pipeline.context_render import Box, tile_boxes, wider_tiles
 from excel_catalog_pipeline.context_source import (
     ContextError,
     ImageLimitError,
@@ -85,8 +86,27 @@ def test_tiles_cover_far_right_and_disconnected_regions_without_blank_flood() ->
 
 
 def test_image_limit_fails_instead_of_truncating() -> None:
-    with pytest.raises(SheetSkipError, match="max_images"):
+    with pytest.raises(ImageLimitError, match="max_images") as raised:
         tile_boxes([Box(0, 0, 10000, 10000)], ContextConfig(max_images=2))
+    # Not even tiles twice as wide and tall would fit.
+    assert raised.value.wider_scale is None
+
+
+def test_image_limit_names_the_smallest_wider_tiles_that_fit() -> None:
+    config = ContextConfig(max_images=4)
+    boxes = [Box(0, 0, 2000, 1300)]
+    with pytest.raises(ImageLimitError) as raised:
+        tile_boxes(boxes, config)
+    assert raised.value.wider_scale == 1.75
+    wider = wider_tiles(config, 1.75)
+    assert (wider.tile_width_points, wider.tile_height_points) == (2100, 1400)
+    assert len(tile_boxes(boxes, wider)) <= config.max_images
+    with pytest.raises(ImageLimitError):
+        tile_boxes(boxes, wider_tiles(config, 1.5))
+    # The scale comes back from the rendering process with the exception.
+    returned = pickle.loads(pickle.dumps(raised.value))
+    assert type(returned) is ImageLimitError and returned.wider_scale == 1.75
+    assert str(returned) == str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -1007,6 +1027,76 @@ def test_image_limit_still_skips_a_sheet_without_long_ranges(build_setup, monkey
     result = run()["results"][0]
     assert result["status"] == "skipped" and "max_images" in result["message"]
     assert calls == [] and note.read_bytes() == before
+
+
+def test_sheet_over_the_image_limit_is_rendered_again_with_wider_tiles(
+    build_setup, monkeypatch
+) -> None:
+    _, _, note, _, calls, run = build_setup
+    tiles = []
+
+    def render(snapshot, evidence, output, config):  # type: ignore[no-untyped-def]
+        tiles.append((config.tile_width_points, config.tile_height_points))
+        assert "nativeShapes" not in evidence and "images" not in evidence
+        evidence["nativeShapes"] = []
+        if config.tile_width_points == 1200:
+            raise ImageLimitError("Rendering exceeds generation.limits.max_images", wider_scale=1.5)
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "001.png").write_bytes(b"fixture image")
+        return [{"image": "001.png", "range": "$A$1:$C$9", "overview": False}]
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    result = run()["results"][0]
+    assert result["status"] == "written" and result["tileScale"] == 1.5
+    assert "summarizedRanges" not in result
+    assert tiles == [(1200, 800), (1800, 1200)] and calls == ["Data"]
+    assert len(saved_evidence(note)["images"]) == 1
+    # The scale is not part of the reuse key, so the description is reused.
+    assert run()["results"][0]["status"] == "cached"
+    assert calls == ["Data"]
+
+
+def test_wider_tiles_follow_summarized_ranges_when_still_over_the_limit(
+    build_setup, monkeypatch
+) -> None:
+    _, workbook, note, _, calls, run = build_setup
+    workbook.write_bytes(
+        rewrite_package(workbook.read_bytes(), {"xl/worksheets/sheet1.xml": long_sheet(60)})
+    )
+    rendered = []
+
+    def render(snapshot, evidence, output, config):  # type: ignore[no-untyped-def]
+        rendered.append((len(evidence["cells"]), config.tile_width_points))
+        if config.tile_width_points == 1200:
+            raise ImageLimitError("Rendering exceeds generation.limits.max_images", wider_scale=1.25)
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "001.png").write_bytes(b"fixture image")
+        return [{"image": "001.png", "range": "$A$1:$B$11", "overview": False}]
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    result = run()["results"][0]
+    assert result["status"] == "written" and result["tileScale"] == 1.25
+    assert result["summarizedRanges"] == ["A1:B61"]
+    assert rendered == [(122, 1200), (22, 1200), (22, 1500)] and calls == ["Data"]
+    assert saved_evidence(note)["dataSummaries"][0]["range"] == "A1:B61"
+
+
+def test_sheet_too_large_even_for_wider_tiles_is_skipped(build_setup, monkeypatch) -> None:
+    _, _, note, _, calls, run = build_setup
+    before = note.read_bytes()
+    tiles = []
+
+    def render(snapshot, evidence, output, config):  # type: ignore[no-untyped-def]
+        tiles.append(config.tile_width_points)
+        if config.tile_width_points == 1200:
+            raise ImageLimitError("Rendering exceeds generation.limits.max_images", wider_scale=2.0)
+        raise ImageLimitError("Tiles plus overview exceed generation.limits.max_images")
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    result = run()["results"][0]
+    assert result["status"] == "skipped" and "overview" in result["message"]
+    assert "tileScale" not in result
+    assert tiles == [1200, 2400] and calls == [] and note.read_bytes() == before
 
 
 def test_empty_sheet_of_a_large_workbook_is_skipped_without_ai(build_setup, monkeypatch) -> None:

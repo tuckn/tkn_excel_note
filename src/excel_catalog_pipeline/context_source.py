@@ -50,7 +50,15 @@ class SheetSkipError(ContextError):
 
 
 class ImageLimitError(SheetSkipError):
-    """The sheet needs more images than generation.limits.max_images allows."""
+    """The sheet needs more images than generation.limits.max_images allows.
+
+    `wider_scale`, when set, is the smallest tile enlargement that fits the limit.
+    """
+
+    def __init__(self, message: str, wider_scale: float | None = None) -> None:
+        super().__init__(message)
+        # Kept in __dict__, so it survives pickling back from the rendering process.
+        self.wider_scale = wider_scale
 
 
 class InputLimitError(SheetSkipError):

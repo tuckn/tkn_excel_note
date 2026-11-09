@@ -52,8 +52,8 @@ def _record_layout(evidence: dict[str, Any], fail: bool) -> list[dict[str, str]]
     evidence["cells"][0]["displayText"] = "shown"
     evidence["nativeShapes"] = [{"name": "Arrow"}]
     if fail:
-        # build_context catches this type to summarize long ranges and render again.
-        raise ImageLimitError("Rendering exceeds generation.limits.max_images")
+        # build_context catches this type to summarize long ranges or widen the tiles.
+        raise ImageLimitError("Rendering exceeds generation.limits.max_images", wider_scale=1.5)
     return [{"image": "001.png"}]
 
 
@@ -166,8 +166,9 @@ def test_layout_updates_and_exception_types_come_back_from_the_child():
     }
 
     evidence = {"sheet": "Data", "cells": [{"cell": "A1"}]}
-    with pytest.raises(ImageLimitError, match="max_images"):
+    with pytest.raises(ImageLimitError, match="max_images") as raised:
         render_process.run_with_time_limit(_record_layout, (evidence, True), 60)
+    assert raised.value.wider_scale == 1.5
     assert evidence["cells"][0]["displayText"] == "shown"
 
     with pytest.raises(ContextError, match="UnpicklableError: holds a lock"):

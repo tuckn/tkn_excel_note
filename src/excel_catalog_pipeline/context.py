@@ -32,7 +32,7 @@ from .context_provider import (
     resolve_profile,
     utc_now,
 )
-from .context_render import render_sheet
+from .context_render import render_sheet, wider_tiles
 from .context_source import (
     ContextError,
     ImageLimitError,
@@ -722,6 +722,31 @@ def build_context(
                             evidence = shorter
                             describe(result, evidence)
                             images = _draw(snapshot, evidence, images_dir, relative_dir, config)
+                    except ImageLimitError as exc:
+                        if exc.wider_scale is None:
+                            skip(result, exc)
+                            continue
+                        # Last resort: fewer, wider tiles, each with smaller text.
+                        logger.info(
+                            "Sheet %s: %s; rendering again with tiles %gx wider and taller, "
+                            "at a lower resolution.",
+                            sheet["name"],
+                            exc,
+                            exc.wider_scale,
+                        )
+                        evidence = _before_rendering(evidence)
+                        try:
+                            images = _draw(
+                                snapshot,
+                                evidence,
+                                images_dir,
+                                relative_dir,
+                                wider_tiles(config, exc.wider_scale),
+                            )
+                        except SheetSkipError as again:
+                            skip(result, again)
+                            continue
+                        result["tileScale"] = exc.wider_scale
                     except SheetSkipError as exc:
                         skip(result, exc)
                         continue

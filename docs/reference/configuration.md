@@ -308,7 +308,8 @@ BOM 付きでも読み込めます。
 `max_input_chars` 以外の数値は、正の整数で指定します。
 上限を超えた場合でも、値を途中で切り捨てません。
 `max_images`・`max_cells`・`max_input_chars` を超えたシートは、長いデータの範囲を列ごとの要約にして解析します（「[長いデータの表を要約する](../guides/sheet-content.md#長いデータの表を要約する)」）。
-要約しても超えるシートと、`max_objects` を超えたシートは、AI を呼ばずにそのシートだけを飛ばし、残りのシートの生成を続けます。
+要約しても `max_images` だけを超えるシートは、1枚の画像に写す範囲を最大2倍まで広げて描画し直します（「[広い範囲を写して画像を減らす](../guides/sheet-content.md#広い範囲を写して画像を減らす)」）。
+それでも超えるシートと、`max_objects` を超えたシートは、AI を呼ばずにそのシートだけを飛ばし、残りのシートの生成を続けます。
 `max_workbook_mb` を超えたブックは、Excel で開かずに画像なしで解析します（「[大きなブックを文字だけで解析する](../guides/sheet-content.md#大きなブックを文字だけで解析する)」）。
 `max_reference_chars` を超えた場合は、そのブックの生成を止めます。
 上限（`max_images`・`max_cells`・`max_objects`・`max_input_chars`・`max_workbook_mb`・`max_reference_chars`）を変えても、`pull` は前回の説明を再利用します。

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import math
 from dataclasses import dataclass
@@ -31,8 +32,39 @@ class Box:
         )
 
 
+# Tile enlargements tried when a sheet does not fit generation.limits.max_images. Each
+# tile is still printed on one page, so text shrinks; past half size it is unreadable.
+WIDER_TILE_SCALES = (1.25, 1.5, 1.75, 2.0)
+
+
+def wider_tiles(config: ContextConfig, scale: float) -> ContextConfig:
+    """The same settings with each tile covering `scale` times the width and height."""
+    return dataclasses.replace(
+        config,
+        tile_width_points=round(config.tile_width_points * scale),
+        tile_height_points=round(config.tile_height_points * scale),
+    )
+
+
 def tile_boxes(boxes: list[Box], config: ContextConfig) -> list[Box]:
-    """Cover content, skipping empty areas, and order tiles top-to-bottom then left-to-right."""
+    """Cover content, skipping empty areas, and order tiles top-to-bottom then left-to-right.
+
+    When the tiles exceed generation.limits.max_images, ImageLimitError.wider_scale
+    names the smallest enlargement in WIDER_TILE_SCALES that fits, if any.
+    """
+    try:
+        return _tiles(boxes, config)
+    except ImageLimitError as exc:
+        for scale in WIDER_TILE_SCALES:
+            try:
+                _tiles(boxes, wider_tiles(config, scale))
+            except ImageLimitError:
+                continue
+            raise ImageLimitError(str(exc), wider_scale=scale) from None
+        raise
+
+
+def _tiles(boxes: list[Box], config: ContextConfig) -> list[Box]:
     if not boxes:
         raise SheetSkipError("Selected worksheet has no visible cells or shapes to render")
     left = max(0.0, min(b.left for b in boxes) - 8)
