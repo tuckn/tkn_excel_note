@@ -15,6 +15,7 @@ import pytest
 from excel_catalog_pipeline import context_render, excel_render, render_process
 from excel_catalog_pipeline.context_source import (
     ContextError,
+    ImageLimitError,
     SheetSkipError,
     extract_sheet,
     rendering_snapshot,
@@ -24,10 +25,6 @@ from excel_catalog_pipeline.models import ContextConfig
 from tests.helpers import create_workbook
 
 windows_only = pytest.mark.skipif(os.name != "nt", reason="Process handles are Windows-only")
-
-
-class LayoutLimitError(SheetSkipError):
-    """Stands in for SheetSkipError subclasses that callers match by type."""
 
 
 class UnpicklableError(Exception):
@@ -55,7 +52,8 @@ def _record_layout(evidence: dict[str, Any], fail: bool) -> list[dict[str, str]]
     evidence["cells"][0]["displayText"] = "shown"
     evidence["nativeShapes"] = [{"name": "Arrow"}]
     if fail:
-        raise LayoutLimitError("Rendering exceeds generation.limits.max_images")
+        # build_context catches this type to summarize long ranges and render again.
+        raise ImageLimitError("Rendering exceeds generation.limits.max_images")
     return [{"image": "001.png"}]
 
 
@@ -168,7 +166,7 @@ def test_layout_updates_and_exception_types_come_back_from_the_child():
     }
 
     evidence = {"sheet": "Data", "cells": [{"cell": "A1"}]}
-    with pytest.raises(LayoutLimitError, match="max_images"):
+    with pytest.raises(ImageLimitError, match="max_images"):
         render_process.run_with_time_limit(_record_layout, (evidence, True), 60)
     assert evidence["cells"][0]["displayText"] == "shown"
 
