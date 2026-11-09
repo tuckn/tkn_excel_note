@@ -139,7 +139,9 @@ def extract_sheet(
     """
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         if not sheet["part"].startswith("xl/worksheets/"):
-            raise ContextError(f"Only worksheets are supported: {sheet['name']}")
+            # Chart, dialog and macro sheets have no cells; the other sheets still go on.
+            kind = "a chart sheet" if sheet["part"].startswith("xl/chartsheets/") else "not a worksheet"
+            raise SheetSkipError(f"Only worksheets are supported; this sheet is {kind}")
         root = ET.fromstring(archive.read(sheet["part"]))
         shared_entries = (
             list(ET.fromstring(archive.read("xl/sharedStrings.xml")))

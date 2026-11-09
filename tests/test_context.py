@@ -650,6 +650,47 @@ def test_rendering_limit_skips_the_sheet_without_ai(build_setup, monkeypatch) ->
     assert calls == [] and note.read_bytes() == before
 
 
+def with_chart_sheet(data: bytes) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        workbook = archive.read("xl/workbook.xml").replace(
+            b"</sheets>", b'<sheet name="Graph" sheetId="2" r:id="rIdChart"/></sheets>'
+        )
+        rels = archive.read("xl/_rels/workbook.xml.rels").replace(
+            b"</Relationships>",
+            b'<Relationship Id="rIdChart" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet" Target="chartsheets/sheet1.xml"/></Relationships>',
+        )
+    return rewrite_package(
+        data,
+        {
+            "xl/workbook.xml": workbook,
+            "xl/_rels/workbook.xml.rels": rels,
+            "xl/chartsheets/sheet1.xml": b'<chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>',
+        },
+    )
+
+
+def test_chart_sheet_is_skipped_and_the_other_sheets_are_described(build_setup) -> None:
+    source, workbook, _, _, calls, _ = build_setup
+    workbook.write_bytes(with_chart_sheet(workbook.read_bytes()))
+    for dry_run in (True, False):
+        result = context.run_context(
+            source,
+            ContextConfig(),
+            workbook_selector="book.xlsx",
+            sheet_names=[],
+            all_sheets=True,
+            list_only=False,
+            dry_run=dry_run,
+            force=False,
+            logger=LOGGER,
+        )
+        assert result["status"] == "success"
+        statuses = {item["sheet"]: item["status"] for item in result["results"]}
+        assert statuses == {"Data": "planned" if dry_run else "written", "Graph": "skipped"}
+        assert "chart sheet" in result["results"][1]["message"]
+    assert calls == ["Data"]
+
+
 @pytest.mark.parametrize("version", [2, 3])
 def test_earlier_records_are_reused_and_upgraded(build_setup, version) -> None:
     source, workbook, _, state, calls, run = build_setup
