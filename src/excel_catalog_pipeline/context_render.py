@@ -11,6 +11,7 @@ from typing import Any
 from .context_source import ContextError, ImageLimitError, SheetSkipError
 from .excel_render import worksheet_snapshot
 from .models import ContextConfig
+from .render_process import run_with_time_limit
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,19 @@ def _overflow_bounds(ws: Any, area: Any, text: str, box: Box) -> Box:
 
 
 def render_sheet(
+    snapshot: Path, evidence: dict[str, Any], output: Path, config: ContextConfig
+) -> list[dict[str, Any]]:
+    """Render in a child process stopped after generation.limits.max_render_seconds.
+
+    Adds layout details to `evidence`, as rendering in this process would.
+    """
+    images: list[dict[str, Any]] = run_with_time_limit(
+        _render_in_excel, (snapshot, evidence, output, config), config.max_render_seconds
+    )
+    return images
+
+
+def _render_in_excel(
     snapshot: Path, evidence: dict[str, Any], output: Path, config: ContextConfig
 ) -> list[dict[str, Any]]:
     try:

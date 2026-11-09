@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .context_source import ContextError
+from .render_process import excel_started
 
 
 @contextmanager
@@ -27,6 +28,8 @@ def worksheet_snapshot(snapshot: Path, sheet: str) -> Iterator[Any]:
     pythoncom.CoInitialize()
     try:
         app = client.DispatchEx("Excel.Application")
+        # Lets a rendering time limit stop this instance, and only this one.
+        excel_started(app)
         app.Visible = False
         app.DisplayAlerts = False
         app.EnableEvents = False

@@ -116,6 +116,7 @@ class ContextConfig:
     max_input_chars: int | None = None
     max_workbook_mb: int = 100
     max_reference_chars: int = 20000
+    max_render_seconds: int = 600
     # Resolved invocation data, excluded from persisted configuration.
     generator_id: str | None = None
     reference_inputs: tuple[ReferenceInput, ...] = ()

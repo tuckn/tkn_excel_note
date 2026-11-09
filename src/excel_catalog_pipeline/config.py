@@ -47,6 +47,7 @@ GENERATION_LIMIT_KEYS = (
     "max_objects",
     "max_input_chars",
     "max_workbook_mb",
+    "max_render_seconds",
 )
 
 

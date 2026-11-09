@@ -91,3 +91,4 @@ generation:
     max_objects: 10000
     max_input_chars: null  # Evidence JSON limit, separate from supplementary references.
     max_workbook_mb: 100  # Also applies to sheet covers.
+    max_render_seconds: 600  # Per sheet; then only the Excel this tool started is stopped.

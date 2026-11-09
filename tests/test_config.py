@@ -292,6 +292,29 @@ def test_evidence_character_limit_rejects_invalid_values(value):
         )
 
 
+def test_render_time_limit_defaults_to_ten_minutes_and_can_be_set():
+    defaults = config_module.validate_config(config_module.DEFAULT_CONFIG)
+    assert defaults.context.max_render_seconds == 600
+    assert config_as_dict(defaults)["generation"]["limits"]["max_render_seconds"] == 600
+    assert "max_render_seconds: 600" in config_template_text()
+
+    limited = config_module.validate_config(
+        {**config_module.DEFAULT_CONFIG, "generation": {"limits": {"max_render_seconds": 120}}}
+    )
+    assert limited.context.max_render_seconds == 120
+
+
+@pytest.mark.parametrize("value", [0, -1, True, None, "600", 1.5])
+def test_render_time_limit_rejects_invalid_values(value):
+    with pytest.raises(ConfigError, match="generation.limits.max_render_seconds"):
+        config_module.validate_config(
+            {
+                **config_module.DEFAULT_CONFIG,
+                "generation": {"limits": {"max_render_seconds": value}},
+            }
+        )
+
+
 def test_generation_layer_precedence(tmp_path, monkeypatch):
     shared = tmp_path / "global.yaml"
     shared.write_text(
