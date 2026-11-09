@@ -24,7 +24,7 @@ from tkn_genai_bridge import (
 
 from .config import _deep_merge
 from .context_profiles import load_context_profile, render_context
-from .context_source import ContextError, SheetSkipError
+from .context_source import ContextError, InputLimitError
 from .generation import reference_prompt, reference_provenance
 from .models import ContextConfig
 
@@ -66,7 +66,7 @@ def evidence_payload(evidence: dict[str, Any], max_chars: int | None) -> tuple[s
     payload = compact_payload if use_tables else ordinary
     if max_chars is not None and len(payload) > max_chars:
         encoding = "column tables" if use_tables else "ordinary JSON"
-        raise SheetSkipError(
+        raise InputLimitError(
             f"Evidence requires {len(payload):,} characters using {encoding} "
             f"(ordinary JSON: {len(ordinary):,}); generation.limits.max_input_chars={max_chars:,}. "
             "No AI was called or content truncated."
@@ -210,7 +210,9 @@ def generate_markdown(
     stage: str = "sheet",
     on_usage: Callable[[dict[str, Any]], None] | None = None,
     on_output: Callable[[dict[str, Any]], None] | None = None,
+    text_only: bool = False,
 ) -> str:
+    """Generate one sheet or workbook description; `text_only` sheets come without images."""
     connection = profile if profile is not None else resolve_profile(config)
     payload, ordinary_chars, compact = evidence_payload(evidence, config.max_input_chars)
     logger.info(
@@ -220,8 +222,10 @@ def generate_markdown(
         ordinary_chars,
         config.max_input_chars if config.max_input_chars is not None else "none",
     )
-    if (stage == "sheet" and not images) or len(images) > config.max_images:
+    if (stage == "sheet" and not images and not text_only) or len(images) > config.max_images:
         raise ContextError("Sheet generation requires between 1 and generation.limits.max_images images")
+    if text_only and images:
+        raise ContextError("Text-only sheet generation takes no images")
     writing = load_context_profile(config, stage=stage)
     prompt = reference_prompt(writing.prompt, config) + "\nSOURCE EVIDENCE (JSON):\n" + payload
     try:

@@ -194,3 +194,77 @@ def drawing_items(
                 if title:
                     result.append({"cell": cell, "kind": "chart", "text": title})
     return result
+
+
+def _chart_reference(element: ET.Element | None) -> str | None:
+    """Formula of a series part, or its literal cached text when it has no formula."""
+    if element is None:
+        return None
+    formula = element.find(f".//{C}f")
+    if formula is not None and formula.text:
+        return formula.text
+    values = [node.text or "" for node in element.iter(C + "v")]
+    return normalize_space(" ".join(values)) or None
+
+
+def chart_details(
+    archive: zipfile.ZipFile, sheet_part: str, root: ET.Element
+) -> list[dict[str, Any]]:
+    """Type, title and series ranges of each chart, for evidence without images."""
+    targets = dict(
+        (rel_id, target) for rel_id, _, target in relationship_entries(archive, sheet_part)
+    )
+    result: list[dict[str, Any]] = []
+    for drawing in root.findall(S + "drawing"):
+        part = targets.get(str(drawing.get(R + "id")))
+        if not part or part not in archive.namelist():
+            continue
+        try:
+            drawing_root = ET.fromstring(archive.read(part))
+        except ET.ParseError:
+            continue
+        chart_targets = dict(
+            (rel_id, target) for rel_id, _, target in relationship_entries(archive, part)
+        )
+        for anchor in drawing_root:
+            if anchor.tag not in ANCHORS:
+                continue
+            for chart in anchor.iter(C + "chart"):
+                target = chart_targets.get(str(chart.get(R + "id")))
+                if not target or target not in archive.namelist():
+                    continue
+                try:
+                    chart_root = ET.fromstring(archive.read(target))
+                except ET.ParseError:
+                    continue
+                plot = chart_root.find(f"{C}chart/{C}plotArea")
+                kinds = [
+                    child.tag.rsplit("}", 1)[-1]
+                    for child in (plot if plot is not None else [])
+                    if child.tag.endswith("Chart")
+                ]
+                series = []
+                for item in plot.iter(C + "ser") if plot is not None else []:
+                    entry = {
+                        "name": _chart_reference(item.find(C + "tx")),
+                        "categories": _chart_reference(
+                            item.find(C + "cat") if item.find(C + "cat") is not None
+                            else item.find(C + "xVal")
+                        ),
+                        "values": _chart_reference(
+                            item.find(C + "val") if item.find(C + "val") is not None
+                            else item.find(C + "yVal")
+                        ),
+                    }
+                    series.append({key: value for key, value in entry.items() if value})
+                detail: dict[str, Any] = {"cell": _anchor_cell(anchor), "types": kinds}
+                title = _chart_title(archive, target)
+                if title:
+                    detail["title"] = title
+                pivot = chart_root.findtext(f"{C}pivotSource/{C}name")
+                if pivot:
+                    detail["pivotSource"] = pivot
+                if series:
+                    detail["series"] = series
+                result.append(detail)
+    return result

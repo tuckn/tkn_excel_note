@@ -18,6 +18,7 @@ from excel_catalog_pipeline.context_profiles import load_context_profile, render
 from excel_catalog_pipeline.context_render import Box, tile_boxes
 from excel_catalog_pipeline.context_source import (
     ContextError,
+    ImageLimitError,
     SheetSkipError,
     extract_sheet,
     rendering_snapshot,
@@ -128,7 +129,7 @@ def build_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         return [{"image": "001.png", "range": "$A$1:$C$9", "overview": False}]
 
     def generate(
-        config, evidence, images, usage_path, logger, *, profile, on_usage, on_output=None
+        config, evidence, images, usage_path, logger, *, profile, on_usage, on_output=None, text_only=False
     ):
         calls.append(evidence["sheet"])
         on_usage(
@@ -287,7 +288,7 @@ def test_local_links_are_plain_text_without_losing_other_links(build_setup, monk
     _, _, note, _, calls, run = build_setup
 
     def generate(
-        config, evidence, images, usage_path, logger, *, profile, on_usage, on_output=None
+        config, evidence, images, usage_path, logger, *, profile, on_usage, on_output=None, text_only=False
     ):
         calls.append(evidence["sheet"])
         on_usage({"inputTokens": 1, "outputTokens": 2, "durationSeconds": 1})
@@ -842,3 +843,179 @@ def test_build_through_real_bridge_preserves_workbook_and_failure_note(
         journal = Path(result["results"][0]["usagePath"])
         assert json.loads(journal.read_text())["generationRecord"]["images"]
         assert run()["results"][0]["status"] == "cached"
+
+
+def long_sheet(rows: int) -> bytes:
+    """A header row over `rows` rows of amounts and shops."""
+    body = "".join(
+        f'<row r="{row}"><c r="A{row}"><v>{row}</v></c>'
+        f'<c r="B{row}" t="inlineStr"><is><t>{"Store" if row % 3 else "Market"}</t></is></c></row>'
+        for row in range(2, rows + 2)
+    )
+    return (
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>Amount</t></is></c>'
+        '<c r="B1" t="inlineStr"><is><t>Shop</t></is></c></row>'
+        f"{body}</sheetData></worksheet>"
+    ).encode()
+
+
+def run_with(source, config, **kwargs):  # type: ignore[no-untyped-def]
+    return context.run_context(
+        source,
+        config,
+        workbook_selector="book.xlsx",
+        sheet_names=["Data"],
+        all_sheets=False,
+        list_only=False,
+        dry_run=kwargs.get("dry_run", False),
+        force=False,
+        logger=LOGGER,
+    )
+
+
+def saved_evidence(note: Path) -> dict:
+    return json.loads(next((note.parent / "img").rglob("evidence.json")).read_text(encoding="utf-8"))
+
+
+def test_long_data_range_is_summarized_when_cells_exceed_the_limit(build_setup) -> None:
+    source, workbook, note, state, calls, _ = build_setup
+    workbook.write_bytes(
+        rewrite_package(workbook.read_bytes(), {"xl/worksheets/sheet1.xml": long_sheet(60)})
+    )
+    config = ContextConfig(max_cells=30)
+    planned = run_with(source, config, dry_run=True)["results"][0]
+    assert planned["status"] == "planned" and planned["summarizedRanges"] == ["A1:B61"]
+    assert planned["cellCount"] == 22
+    written = run_with(source, config)["results"][0]
+    assert written["status"] == "written" and written["summarizedRanges"] == ["A1:B61"]
+    evidence = saved_evidence(note)
+    assert evidence["dataSummaries"][0]["summarizedRows"] == "12-61"
+    assert len(evidence["cells"]) == 22 and "dataSummaryPolicy" in evidence
+    assert run_with(source, config)["results"][0]["status"] == "cached"
+    assert calls == ["Data"]
+    # The workbook overview still counts the summarized sheet as current.
+    data = workbook.read_bytes()
+    state_dir = state / "context" / context.digest(str(note.resolve()).encode())[:24]
+    text = note.read_bytes().decode("utf-8-sig")
+    assert [item["status"] for item in context._collect_context(text, note, data, config, state_dir)] == [
+        "current"
+    ]
+
+
+def test_sheet_over_the_image_limit_is_rendered_again_with_ranges_summarized(
+    build_setup, monkeypatch
+) -> None:
+    source, workbook, note, _, calls, run = build_setup
+    workbook.write_bytes(
+        rewrite_package(workbook.read_bytes(), {"xl/worksheets/sheet1.xml": long_sheet(60)})
+    )
+    rendered = []
+
+    def render(snapshot, evidence, output, config):  # type: ignore[no-untyped-def]
+        rendered.append(len(evidence["cells"]))
+        if "dataSummaries" not in evidence:
+            raise ImageLimitError("Rendering exceeds generation.limits.max_images; no AI was called")
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "001.png").write_bytes(b"fixture image")
+        return [{"image": "001.png", "range": "$A$1:$B$11", "overview": False}]
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    result = run()["results"][0]
+    assert result["status"] == "written" and result["summarizedRanges"] == ["A1:B61"]
+    assert rendered == [122, 22] and calls == ["Data"]
+    assert saved_evidence(note)["dataSummaries"][0]["range"] == "A1:B61"
+
+
+def test_evidence_too_long_after_rendering_is_rendered_again_with_ranges_summarized(
+    build_setup, monkeypatch
+) -> None:
+    source, workbook, note, _, calls, _ = build_setup
+    workbook.write_bytes(
+        rewrite_package(workbook.read_bytes(), {"xl/worksheets/sheet1.xml": long_sheet(60)})
+    )
+    data = workbook.read_bytes()
+    full = extract_sheet(data, sheet_list(data)[0], max_cells=None, max_objects=10)
+    full.pop("legacyFingerprint")
+    limit = len(context.evidence_payload(full, None)[0]) + 2000
+    rendered = []
+
+    def render(snapshot, evidence, output, config):  # type: ignore[no-untyped-def]
+        rendered.append(len(evidence["cells"]))
+        for cell in evidence["cells"]:
+            cell["displayText"] = "x" * 100
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "001.png").write_bytes(b"fixture image")
+        return [{"image": "001.png", "range": "$A$1:$B$11", "overview": False}]
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    result = run_with(source, ContextConfig(max_input_chars=limit))["results"][0]
+    assert result["status"] == "written" and result["summarizedRanges"] == ["A1:B61"]
+    assert rendered == [122, 22] and calls == ["Data"]
+    assert len(saved_evidence(note)["cells"]) == 22
+
+
+def test_image_limit_still_skips_a_sheet_without_long_ranges(build_setup, monkeypatch) -> None:
+    _, _, note, _, calls, run = build_setup
+    before = note.read_bytes()
+
+    def render(*args):  # type: ignore[no-untyped-def]
+        raise ImageLimitError("Rendering exceeds generation.limits.max_images; no AI was called")
+
+    monkeypatch.setattr(context, "render_sheet", render)
+    result = run()["results"][0]
+    assert result["status"] == "skipped" and "max_images" in result["message"]
+    assert calls == [] and note.read_bytes() == before
+
+
+def test_empty_sheet_of_a_large_workbook_is_skipped_without_ai(build_setup, monkeypatch) -> None:
+    source, workbook, note, _, calls, _ = build_setup
+    workbook.write_bytes(
+        rewrite_package(
+            workbook.read_bytes(),
+            {
+                "xl/worksheets/sheet1.xml": b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>'
+            },
+        )
+    )
+    before = note.read_bytes()
+    monkeypatch.setattr(context, "render_sheet", lambda *args: pytest.fail("must not open Excel"))
+    for dry_run in (True, False):
+        result = run_with(source, ContextConfig(max_workbook_mb=0), dry_run=dry_run)["results"][0]
+        assert result["status"] == "skipped" and "no cells or shapes" in result["message"]
+    assert calls == [] and note.read_bytes() == before
+
+
+def test_workbook_over_the_size_limit_is_described_from_text(build_setup, monkeypatch) -> None:
+    source, _, note, state, _, _ = build_setup
+    monkeypatch.setattr(context, "render_sheet", lambda *args: pytest.fail("must not open Excel"))
+    seen = []
+
+    def generate(config, evidence, images, usage_path, logger, *, profile, on_usage, on_output=None, text_only=False):  # type: ignore[no-untyped-def]
+        seen.append((images, text_only, evidence["renderingPolicy"], evidence["images"]))
+        on_usage({"inputTokens": 1, "outputTokens": 1, "durationSeconds": 1})
+        data = {
+            "summary": "Text-only context.",
+            "conclusion": None,
+            "key_points": [],
+            "sections": [],
+            "uncertainties": [],
+        }
+        if on_output is not None:
+            on_output(data)
+        return render_context(load_context_profile(config), data)
+
+    monkeypatch.setattr(context, "generate_markdown", generate)
+    config = ContextConfig(max_workbook_mb=0)
+    planned = run_with(source, config, dry_run=True)["results"][0]
+    assert planned["status"] == "planned" and planned["textOnly"] is True
+    written = run_with(source, config)["results"][0]
+    assert written["status"] == "written" and written["textOnly"] is True
+    assert written["imageCount"] == 0
+    assert seen == [([], True, context.TEXT_ONLY_POLICY, [])]
+    text = note.read_bytes().decode("utf-8-sig")
+    assert "Text-only context." in text and "出典画像" not in text
+    record = json.loads(next(state.rglob("sheet-1.json")).read_text(encoding="utf-8"))
+    assert record["textOnly"] is True and record["assets"] == {}
+    assert run_with(source, config)["results"][0]["status"] == "cached"
+    assert len(seen) == 1

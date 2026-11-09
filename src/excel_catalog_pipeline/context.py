@@ -35,11 +35,14 @@ from .context_provider import (
 from .context_render import render_sheet
 from .context_source import (
     ContextError,
+    ImageLimitError,
+    InputLimitError,
     SheetSkipError,
     extract_sheet,
     rendering_snapshot,
     sheet_list,
 )
+from .context_tables import fit_evidence, shortened_evidence
 from .discovery import is_source_path_in_scope
 from .generation import reference_provenance
 from .models import ContextConfig, SourceConfig
@@ -66,9 +69,19 @@ def resolve_workbook(source: SourceConfig, selector: str, config: ContextConfig)
         raise ContextError("Workbook is excluded by the selected source configuration")
     if path.suffix.lower() not in {".xlsx", ".xlsm"} or not path.is_file():
         raise ContextError("Select an existing .xlsx or .xlsm workbook")
-    if path.stat().st_size > config.max_workbook_mb * 1024 * 1024:
-        raise ContextError("Workbook exceeds generation.limits.max_workbook_mb")
     return path
+
+
+TEXT_ONLY_POLICY = (
+    "No images: the workbook is larger than generation.limits.max_workbook_mb, so it was not "
+    "opened in Excel. Describe the sheet from this evidence only; its layout, colors and the look "
+    "of its charts are unknown. charts gives each chart's types, title and series ranges."
+)
+
+
+def opens_in_excel(data: bytes, config: ContextConfig) -> bool:
+    """Whether the workbook is small enough to render; larger ones are described from text."""
+    return len(data) <= config.max_workbook_mb * 1024 * 1024
 
 
 def find_proxy(source: SourceConfig, workbook: Path, data: bytes) -> tuple[Path, str]:
@@ -151,7 +164,7 @@ def _assets_intact(note: Path, state: dict[str, Any]) -> bool:
     if not isinstance(assets, dict):
         return False
     if not assets:
-        return state.get("origin") == "import"
+        return state.get("origin") == "import" or state.get("textOnly") is True
     for relative, checksum in assets.items():
         path = (note.parent / relative).resolve()
         if not path.is_relative_to((note.parent / "img").resolve()) or not path.is_file():
@@ -352,10 +365,12 @@ def _sheet_block(
         f"- [{image['range']} ({'overview' if image['overview'] else 'detail'})]({image['relativePath']})"
         for image in images
     )
+    # A sheet described from text alone has no images to list.
+    sources = f"#### {writing.labels['source_images']}\n\n{links}\n\n" if images else ""
     return (
         f"<!-- excel-catalog:begin context-{sheet['id']} -->\n"
         f"### {sheet_heading(sheet['name'])}\n\n{writing.labels['profile']}: {writing.name}\n\n{markdown}\n\n"
-        f"#### {writing.labels['source_images']}\n\n{links}\n\n"
+        f"{sources}"
         f"<!-- Saved-file snapshot SHA256: {record['snapshotSha256']}; generated: {record['generatedAt']}; "
         f"provider: {record['provider']}; requested model: {record['model'] or 'provider default'}; "
         f"profile: {writing.name}; version: {writing.version}; profile SHA256: {writing.sha256} -->\n"
@@ -445,6 +460,26 @@ def _save_generation(
     }
 
 
+def _draw(
+    snapshot: Path,
+    evidence: dict[str, Any],
+    images_dir: Path,
+    relative_dir: Path,
+    config: ContextConfig,
+) -> list[dict[str, Any]]:
+    """Render a sheet and check its evidence, which now holds layout and image details."""
+    images = render_sheet(snapshot, evidence, images_dir, config)
+    for image in images:
+        image["relativePath"] = (relative_dir / image["image"]).as_posix()
+    evidence["images"] = images
+    evidence_payload(evidence, config.max_input_chars)
+    return images
+
+
+def _before_rendering(evidence: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in evidence.items() if key not in {"images", "nativeShapes"}}
+
+
 def _replace_note(note: Path, original: bytes, encoded: bytes) -> None:
     temporary_note = note.with_name(f".{note.name}.{uuid.uuid4().hex}.tmp")
     try:
@@ -488,18 +523,38 @@ def build_context(
     writing = load_context_profile(config)
     if include_overview:
         load_context_profile(config, stage="workbook")
+    text_only = not opens_in_excel(data, config)
+    if text_only:
+        logger.info(
+            "Workbook exceeds generation.limits.max_workbook_mb (%d MiB); describing its sheets "
+            "from text without opening Excel.",
+            config.max_workbook_mb,
+        )
     # Validate all requested sheets before any rendering, paid call, or persistent write.
-    # A sheet over a per-sheet limit is skipped; any other problem stops the workbook.
+    # A sheet over a per-sheet limit has its long data ranges summarized; one that still
+    # does not fit is skipped. Any other problem stops the workbook.
     prepared: list[dict[str, Any] | SheetSkipError] = []
     legacy_fingerprints: dict[str, str] = {}
     for sheet in selected:
         try:
             evidence = extract_sheet(
-                data, sheet, max_cells=config.max_cells, max_objects=config.max_objects
+                data,
+                sheet,
+                max_cells=None,
+                max_objects=config.max_objects,
+                include_charts=text_only,
             )
             # Kept apart so it is neither sent to the AI nor saved as evidence.
             legacy_fingerprints[sheet["id"]] = evidence.pop("legacyFingerprint")
-            evidence_payload(evidence, config.max_input_chars)
+            if text_only:
+                # Without Excel, an empty sheet is found here instead of while rendering.
+                if not any(
+                    evidence.get(key)
+                    for key in ("cells", "objects", "comments", "legacyShapes", "charts")
+                ):
+                    raise SheetSkipError("Selected worksheet has no cells or shapes to describe")
+                evidence["renderingPolicy"] = TEXT_ONLY_POLICY
+            evidence = fit_evidence(evidence, data, sheet, config)
         except SheetSkipError as exc:
             prepared.append(exc)
         else:
@@ -512,6 +567,13 @@ def build_context(
     def skip(result: dict[str, Any], exc: SheetSkipError) -> None:
         result.update(status="skipped", message=str(exc))
         logger.warning("Sheet %s: skipped; %s", result["sheet"], exc)
+
+    def describe(result: dict[str, Any], evidence: dict[str, Any]) -> None:
+        if text_only:
+            result["textOnly"] = True
+        summaries = evidence.get("dataSummaries")
+        if summaries:
+            result["summarizedRanges"] = [item["range"] for item in summaries]
 
     def run() -> None:
         connection: Profile | None = None
@@ -616,6 +678,7 @@ def build_context(
                 )
                 continue
             result["status"] = "planned" if dry_run else "started"
+            describe(result, evidence)
             if dry_run:
                 result["cellCount"] = len(evidence["cells"])
                 result["objectCount"] = len(evidence["objects"])
@@ -628,24 +691,41 @@ def build_context(
             generation_plan(connection, config=config, check_executable=True)
             with tempfile.TemporaryDirectory(prefix="excel-catalog-context-") as temporary:
                 working = Path(temporary).resolve()
-                snapshot = working / ("snapshot" + workbook.suffix)
-                snapshot.write_bytes(rendering_snapshot(data))
                 images_dir = working / "images"
-                logger.info("Rendering sheet %s with native Excel.", sheet["name"])
-                try:
-                    images = render_sheet(snapshot, evidence, images_dir, config)
-                except SheetSkipError as exc:
-                    skip(result, exc)
-                    continue
-                snapshot.unlink()
                 generation = f"{key[:12]}-{uuid.uuid4().hex[:8]}"
                 relative_dir = Path("img") / book_key / f"sheet-{sheet['id']}" / generation
                 destination = note.parent / relative_dir
                 if not destination.resolve().is_relative_to(note.parent.resolve()):
                     raise ContextError("Image output escapes the proxy note directory")
-                for image in images:
-                    image["relativePath"] = (relative_dir / image["image"]).as_posix()
-                evidence["images"] = images
+                if text_only:
+                    images = []
+                    evidence["images"] = images
+                else:
+                    snapshot = working / ("snapshot" + workbook.suffix)
+                    snapshot.write_bytes(rendering_snapshot(data))
+                    logger.info("Rendering sheet %s with native Excel.", sheet["name"])
+                    try:
+                        try:
+                            images = _draw(snapshot, evidence, images_dir, relative_dir, config)
+                        except (ImageLimitError, InputLimitError) as exc:
+                            # Too many images, or evidence too long once layout is added.
+                            shorter = shortened_evidence(
+                                _before_rendering(evidence), data, sheet, config
+                            )
+                            if shorter is None:
+                                raise
+                            logger.info(
+                                "Sheet %s: %s; rendering again with long data ranges summarized.",
+                                sheet["name"],
+                                exc,
+                            )
+                            evidence = shorter
+                            describe(result, evidence)
+                            images = _draw(snapshot, evidence, images_dir, relative_dir, config)
+                    except SheetSkipError as exc:
+                        skip(result, exc)
+                        continue
+                    snapshot.unlink()
                 usage_path = usage_directory / f"{uuid.uuid4().hex}.json"
                 outputs: list[dict[str, Any]] = []
                 try:
@@ -658,6 +738,7 @@ def build_context(
                         profile=connection,
                         on_usage=records.append,
                         on_output=outputs.append,
+                        text_only=text_only,
                     )
                 except SheetSkipError as exc:
                     # Raised while checking the evidence with image metadata, before the call.
@@ -710,6 +791,7 @@ def build_context(
                         "inputKey": key,
                         "blockSha256": block_hash,
                         "assets": assets,
+                        **({"textOnly": True} if text_only else {}),
                         **saved_output,
                         "snapshotSha256": digest(data),
                         "sourceFingerprint": evidence["fingerprint"],
@@ -790,8 +872,9 @@ def _collect_context(
         if matches and saved.get("origin") != "import" and _assets_intact(note, saved):
             if saved.get("sourceFingerprint"):
                 try:
+                    # Sheets with long data ranges were summarized, so read every cell.
                     evidence = extract_sheet(
-                        data, sheet, max_cells=config.max_cells, max_objects=config.max_objects
+                        data, sheet, max_cells=None, max_objects=config.max_objects
                     )
                     fingerprints = {evidence["fingerprint"], evidence["legacyFingerprint"]}
                     status = "current" if saved["sourceFingerprint"] in fingerprints else "stale"

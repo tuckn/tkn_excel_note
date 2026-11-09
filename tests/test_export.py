@@ -160,6 +160,15 @@ def test_context_export_skips_a_sheet_over_the_cell_limit(environment, monkeypat
     assert calls == []
 
 
+def test_export_reads_a_workbook_over_the_size_limit_without_excel(environment, monkeypatch):
+    config, book, calls = environment
+    limited = replace(config, context=replace(config.context, max_workbook_mb=0))
+    monkeypatch.setattr(cli, "load_config", lambda **kwargs: limited)
+    assert cli.main(["--json", "export", str(book)]) == 0
+    text = book.with_name(book.name + ".md").read_text(encoding="utf-8")
+    assert "A1: Catalog entry" in text and calls == []
+
+
 def test_recursive_folder_export_and_single_output(environment, tmp_path, capsys):
     _, book, _ = environment
     other = create_workbook(book.parent / "nested" / "other.xlsm", macro_enabled=True)

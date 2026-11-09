@@ -19,9 +19,18 @@ from .adapters.cell_styles import (
     used_style_indices,
     uses_1904_dates,
 )
-from .adapters.sheet_parts import comments, legacy_shapes, rich_text
+from .adapters.sheet_parts import chart_details, comments, legacy_shapes, rich_text
 
-__all__ = ["ContextError", "extract_sheet", "rendering_snapshot", "rich_text", "sheet_list"]
+__all__ = [
+    "ContextError",
+    "ImageLimitError",
+    "InputLimitError",
+    "SheetSkipError",
+    "extract_sheet",
+    "rendering_snapshot",
+    "rich_text",
+    "sheet_list",
+]
 
 S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -38,6 +47,14 @@ class SheetSkipError(ContextError):
 
     The other sheets and the workbook summary can still be generated.
     """
+
+
+class ImageLimitError(SheetSkipError):
+    """The sheet needs more images than generation.limits.max_images allows."""
+
+
+class InputLimitError(SheetSkipError):
+    """The evidence is longer than generation.limits.max_input_chars allows."""
 
 
 def relationships(archive: zipfile.ZipFile, part: str) -> dict[str, str]:
@@ -106,12 +123,19 @@ def without_view_state(root: ET.Element) -> bytes:
 
 
 def extract_sheet(
-    data: bytes, sheet: dict[str, str], *, max_cells: int, max_objects: int
+    data: bytes,
+    sheet: dict[str, str],
+    *,
+    max_cells: int | None,
+    max_objects: int,
+    include_charts: bool = False,
 ) -> dict[str, Any]:
     """Cells, drawings and fingerprints of one worksheet.
 
     `fingerprint` ignores view state; `legacyFingerprint` hashes the saved XML as it is,
-    as earlier versions did, so their records can still be recognized.
+    as earlier versions did, so their records can still be recognized. `max_cells=None`
+    reads every cell, for callers that shorten long data ranges themselves.
+    `include_charts` adds chart types and series ranges, for evidence without images.
     """
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         if not sheet["part"].startswith("xl/worksheets/"):
@@ -156,7 +180,7 @@ def extract_sheet(
                 cells.append(item)
                 if style.isdigit():
                     cell_styles.add(int(style))
-                if len(cells) > max_cells:
+                if max_cells is not None and len(cells) > max_cells:
                     raise SheetSkipError(
                         f"Sheet exceeds generation.limits.max_cells ({max_cells}); no content was truncated"
                     )
@@ -255,6 +279,10 @@ def extract_sheet(
             result["comments"] = notes
         if legacy:
             result["legacyShapes"] = legacy
+        if include_charts:
+            charts = chart_details(archive, sheet["part"], root)
+            if charts:
+                result["charts"] = charts
         return result
 
 

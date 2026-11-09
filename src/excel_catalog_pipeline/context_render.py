@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .context_source import ContextError, SheetSkipError
+from .context_source import ContextError, ImageLimitError, SheetSkipError
 from .excel_render import worksheet_snapshot
 from .models import ContextConfig
 
@@ -51,12 +51,12 @@ def tile_boxes(boxes: list[Box], config: ContextConfig) -> list[Box]:
         y0 = max(0, math.floor((box.top - top - height) / step_y) + 1)
         y1 = min(ny - 1, math.floor((box.bottom - top) / step_y))
         if (x1 - x0 + 1) * (y1 - y0 + 1) > config.max_images:
-            raise SheetSkipError(
+            raise ImageLimitError(
                 "Rendering exceeds generation.limits.max_images; increase tile dimensions or the image limit"
             )
         occupied.update((y, x) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1))
         if len(occupied) > config.max_images:
-            raise SheetSkipError("Rendering exceeds generation.limits.max_images; no AI was called")
+            raise ImageLimitError("Rendering exceeds generation.limits.max_images; no AI was called")
     result = [
         Box(
             left + x * step_x,
@@ -69,7 +69,7 @@ def tile_boxes(boxes: list[Box], config: ContextConfig) -> list[Box]:
     # A low-resolution overview conveys the whole canvas and disconnected regions.
     if len(result) > 1 and right - left <= width * 16 and bottom - top <= height * 16:
         if len(result) + 1 > config.max_images:
-            raise SheetSkipError(
+            raise ImageLimitError(
                 "Tiles plus overview exceed generation.limits.max_images; no AI was called"
             )
         result.insert(0, Box(left, top, right, bottom, overview=True))
