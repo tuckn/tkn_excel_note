@@ -61,6 +61,24 @@ def snapshot(root: Path) -> dict[str, bytes]:
     }
 
 
+def test_recorded_copy_does_not_keep_a_deleted_original_note(monkeypatch, tmp_path):  # type: ignore[no-untyped-def]
+    config = app_config(tmp_path)
+    state = tmp_path / "sync-state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    monkeypatch.setattr(deletion_module, "state_path", lambda: state)
+    monkeypatch.setattr(deletion_module, "state_root", lambda: tmp_path / "application-state")
+    shared = "33333333-3333-3333-3333-333333333333"
+    original = create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=shared)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    create_workbook(tmp_path / "workbooks" / "copy.xlsx", workbook_id=shared)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    original.unlink()
+    actions, _ = delete(config, dry_run=True, notes=(str(tmp_path / "notes" / "book.xlsx.md"),))
+    assert [action.status for action in actions] == ["would-delete"]
+    actions, _ = delete(config, dry_run=True)
+    assert [action.note_path for action in actions] == [str(tmp_path / "notes" / "book.xlsx.md")]
+
+
 def test_all_missing_preview_has_no_writes_then_deletes_only_orphans(catalog):  # type: ignore[no-untyped-def]
     config, state, root = catalog
     note = root / "notes" / "first.xlsx.md"

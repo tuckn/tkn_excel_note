@@ -196,6 +196,10 @@ class WorkbookInfo:
     content_fingerprint: str = ""
     read_status: str = "ok"
     warnings: list[str] = field(default_factory=list)
+    # A copy keeps another workbook's TknExcelCatalogId in its file; synchronization
+    # ignores that ID and tracks the copy by its own path until it gets a new ID.
+    copied_id: str = ""
+    copy_warning: str = ""
 
     @property
     def workbook_id(self) -> str:

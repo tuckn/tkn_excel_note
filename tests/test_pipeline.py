@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import io
+import json
+import zipfile
 from pathlib import Path
 
 import excel_catalog_pipeline.pipeline as pipeline_module
 from excel_catalog_pipeline.adapters.markdown import NoteError, read_note
-from excel_catalog_pipeline.adapters.ooxml import inspect_workbook, write_properties
+from excel_catalog_pipeline.adapters.ooxml import (
+    inspect_workbook,
+    read_custom_properties,
+    write_properties,
+)
 from excel_catalog_pipeline.config import validate_config
 from excel_catalog_pipeline.note_frontmatter import normalize_timestamp
-from excel_catalog_pipeline.pipeline import run_pull, run_push
+from excel_catalog_pipeline.pipeline import run_adopt, run_pull, run_push
 
 from .helpers import create_workbook
 
@@ -290,6 +297,223 @@ def test_source_rename_is_detected_by_stable_id(monkeypatch, tmp_path: Path) -> 
     assert [action.status for action in applied] == ["updated"]
     assert (tmp_path / "notes" / "renamed.xlsx.md").exists()
     assert not (tmp_path / "notes" / "book.xlsx.md").exists()
+
+
+COPIED_ID = "22222222-2222-2222-2222-222222222222"
+
+
+def _edit_cell(book: Path) -> None:
+    output = io.BytesIO()
+    with zipfile.ZipFile(book) as source, zipfile.ZipFile(output, "w") as target:
+        for name in source.namelist():
+            content = source.read(name)
+            if name == "xl/worksheets/sheet1.xml":
+                content = content.replace(b"<v>42</v>", b"<v>43</v>")
+            target.writestr(name, content)
+    book.write_bytes(output.getvalue())
+
+
+def test_adopt_gives_a_copy_a_new_id_and_keeps_its_note(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    original = create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=COPIED_ID)
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    monkeypatch.setattr(pipeline_module, "state_root", lambda: tmp_path / "application-state")
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    copy = create_workbook(tmp_path / "workbooks" / "copy.xlsx", workbook_id=COPIED_ID)
+    pulled = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert sorted(action.status for action in pulled) == ["created", "unchanged"]
+    created = next(action for action in pulled if action.status == "created")
+    assert created.details["warnings"][0].startswith("Copied workbook:")
+    copy_note = tmp_path / "notes" / "copy.xlsx.md"
+    note_id = read_note(copy_note).note_id
+
+    planned, _ = run_adopt(config, config.sources, write_excel=False)
+    assert {action.source_path: action.status for action in planned} == {
+        "book.xlsx": "unchanged",
+        "copy.xlsx": "would-adopt",
+    }
+    adopted, _ = run_adopt(config, config.sources, write_excel=True)
+    new_id = next(action.workbook_id for action in adopted if action.status == "adopted")
+    assert new_id and new_id != COPIED_ID
+    with zipfile.ZipFile(original) as archive:
+        assert read_custom_properties(archive)["TknExcelCatalogId"] == COPIED_ID
+    with zipfile.ZipFile(copy) as archive:
+        assert read_custom_properties(archive)["TknExcelCatalogId"] == new_id
+
+    again = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert "duplicate-id" not in {action.status for action in again}
+    assert read_note(copy_note).note_id == note_id
+    assert sorted(path.name for path in (tmp_path / "notes").glob("*.md")) == [
+        "book.xlsx.md",
+        "copy.xlsx.md",
+    ]
+
+
+def test_copy_stays_a_copy_after_the_original_is_deleted(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    original = create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=COPIED_ID)
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    monkeypatch.setattr(pipeline_module, "state_root", lambda: tmp_path / "application-state")
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    copy = create_workbook(tmp_path / "workbooks" / "copy.xlsx", workbook_id=COPIED_ID)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    copy_note = tmp_path / "notes" / "copy.xlsx.md"
+    original_note = tmp_path / "notes" / "book.xlsx.md"
+    original.unlink()
+    before = copy.read_bytes(), copy_note.read_bytes()
+
+    pulled = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert {action.source_path: action.status for action in pulled}["copy.xlsx"] == "unchanged"
+    assert copy_note.read_bytes() == before[1]
+    assert original_note.exists()
+    original_note.write_text(
+        original_note.read_text(encoding="utf-8").replace(
+            'title: "Example title"', 'title: "Edited title"'
+        ),
+        encoding="utf-8",
+    )
+    pushed, _ = run_push(
+        config,
+        config.sources,
+        write_excel=True,
+        allow_rename=False,
+        preference=None,
+        note_filters=(),
+    )
+    assert {action.note_path: action.status for action in pushed}[str(original_note)] == (
+        "missing-source"
+    )
+    assert copy.read_bytes() == before[0]
+
+
+def _pulled_original_and_edited_copy(monkeypatch, tmp_path: Path):  # type: ignore[no-untyped-def]
+    original = create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=COPIED_ID)
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    copy = create_workbook(tmp_path / "workbooks" / "copy.xlsx", workbook_id=COPIED_ID)
+    _edit_cell(copy)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    return config, state, original, copy
+
+
+def test_renamed_copy_never_takes_the_deleted_original_note(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    config, _, original, copy = _pulled_original_and_edited_copy(monkeypatch, tmp_path)
+    original_note = tmp_path / "notes" / "book.xlsx.md"
+    before = original_note.read_bytes()
+    copy_note_id = read_note(tmp_path / "notes" / "copy.xlsx.md").note_id
+    original.unlink()
+    copy.replace(copy.with_name("renamed-copy.xlsx"))
+    applied = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert {action.source_path: action.status for action in applied} == {
+        "book.xlsx": "missing-source",
+        "renamed-copy.xlsx": "updated",
+    }
+    assert original_note.read_bytes() == before
+    moved = tmp_path / "notes" / "renamed-copy.xlsx.md"
+    assert read_note(moved).note_id == copy_note_id
+
+
+def test_identical_copies_of_a_deleted_original_stop_instead_of_guessing(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    original = create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=COPIED_ID)
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    copy = create_workbook(tmp_path / "workbooks" / "copy.xlsx", workbook_id=COPIED_ID)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    original_note = tmp_path / "notes" / "book.xlsx.md"
+    before = original_note.read_bytes()
+    original.unlink()
+    copy.replace(copy.with_name("renamed-copy.xlsx"))
+    planned = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert sorted(action.status for action in planned) == ["duplicate-id", "missing-source"]
+    assert original_note.read_bytes() == before
+
+
+def test_copy_is_recorded_even_when_its_note_is_unchanged(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    original = create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=COPIED_ID)
+    other = create_workbook(tmp_path / "workbooks" / "other.xlsx")
+    _edit_cell(other)
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    write_properties(other, custom={"TknExcelCatalogId": COPIED_ID}, backup_dir=tmp_path / "backup")
+    pulled = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert {action.source_path: action.status for action in pulled}["other.xlsx"] == "unchanged"
+    entries = json.loads(state.read_text(encoding="utf-8"))["entries"]
+    assert [entry.get("copiedId") for entry in entries.values()].count(COPIED_ID) == 1
+    original.unlink()
+    again = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert {action.source_path: action.status for action in again} == {
+        "book.xlsx": "missing-source",
+        "other.xlsx": "unchanged",
+    }
+
+
+def test_same_named_copy_in_a_subfolder_gets_its_own_note(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=COPIED_ID)
+    config = app_config(tmp_path, recursive=True)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    original_note = tmp_path / "notes" / "book.xlsx.md"
+    before = original_note.read_bytes()
+    create_workbook(tmp_path / "workbooks" / "sub" / "book.xlsx", workbook_id=COPIED_ID)
+    for preference in (None, "source"):
+        applied = run_pull(config, config.sources, write_notes=True, preference=preference)
+        assert {action.source_path: action.status for action in applied}["book.xlsx"] == "unchanged"
+    assert original_note.read_bytes() == before
+    assert read_note(tmp_path / "notes" / "sub" / "book.xlsx.md").source_id == "example:sub/book.xlsx"
+
+
+def test_renamed_original_is_told_from_an_edited_copy_by_content(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    old_path = create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=COPIED_ID)
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    renamed = old_path.with_name("renamed.xlsx")
+    old_path.replace(renamed)
+    copy = create_workbook(tmp_path / "workbooks" / "copy.xlsx", workbook_id=COPIED_ID)
+    _edit_cell(copy)
+    applied = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert {action.source_path: action.status for action in applied} == {
+        "copy.xlsx": "created",
+        "renamed.xlsx": "updated",
+    }
+    assert (tmp_path / "notes" / "renamed.xlsx.md").exists()
+    assert not (tmp_path / "notes" / "book.xlsx.md").exists()
+
+
+def test_identical_copy_of_a_renamed_original_still_stops(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    old_path = create_workbook(tmp_path / "workbooks" / "book.xlsx", workbook_id=COPIED_ID)
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    run_pull(config, config.sources, write_notes=True, preference=None)
+    old_path.replace(old_path.with_name("renamed.xlsx"))
+    create_workbook(tmp_path / "workbooks" / "copy.xlsx", workbook_id=COPIED_ID)
+    planned = run_pull(config, config.sources, write_notes=False, preference=None)
+    assert [action.status for action in planned] == ["duplicate-id", "duplicate-id"]
+
+
+def test_workbooks_sharing_an_unsynchronized_id_are_tracked_by_path(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    create_workbook(tmp_path / "workbooks" / "a.xlsx", workbook_id=COPIED_ID)
+    create_workbook(tmp_path / "workbooks" / "b.xlsx", workbook_id=COPIED_ID)
+    config = app_config(tmp_path)
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(pipeline_module, "state_path", lambda: state)
+    applied = run_pull(config, config.sources, write_notes=True, preference=None)
+    assert [action.status for action in applied] == ["created", "created"]
+    assert {read_note(path).source_id for path in (tmp_path / "notes").glob("*.md")} == {
+        "example:a.xlsx",
+        "example:b.xlsx",
+    }
 
 
 def test_recursive_pull_mirrors_source_folders_and_relative_frontmatter(

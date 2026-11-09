@@ -409,15 +409,24 @@ def test_removed_sheet_context_is_retired_but_manual_edits_are_protected(setup, 
     assert note.frontmatter["contextStatus"] == "current"
 
 
-def test_single_command_protects_a_stable_id_used_by_another_existing_workbook(setup):
+@pytest.mark.parametrize("single", [False, True])
+def test_copied_workbook_gets_its_own_note_and_leaves_the_original(setup, single):
     _, book, output, _ = setup
     create_workbook(book, workbook_id="same-id")
     assert pull(book, output) == 0
-    before = output.read_bytes(), paths.state_path().read_bytes()
-    other = create_workbook(book.parent / "copy.xlsx", workbook_id="same-id")
-    assert pull(other) == 2
-    assert (output.read_bytes(), paths.state_path().read_bytes()) == before
-    assert not other.with_name(other.name + ".md").exists()
+    before = output.read_bytes()
+    other = create_workbook(book.parent / "copy.xlsx", workbook_id="same-id", title="Copy")
+    options = ["copy.xlsx"] if single else []
+    assert pull(other, None, *options) == 0
+    assert output.read_bytes() == before
+    copy_note = read_note(output.with_name("copy.xlsx.md"))
+    assert copy_note.frontmatter["title"] == "Copy"
+    assert copy_note.source_id == "library:copy.xlsx"
+    assert copy_note.note_id != read_note(output).note_id
+    state = json.loads(paths.state_path().read_text(encoding="utf-8"))
+    assert state["entries"]["workbook:same-id"]["workbookPath"] == str(book.resolve())
+    assert pull(other) == 0
+    assert output.read_bytes() == before
 
 
 def test_relative_sheet_listing_needs_no_note_or_state(setup, monkeypatch, capsys):

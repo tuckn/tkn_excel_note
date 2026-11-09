@@ -146,6 +146,8 @@ def make_entry(
         "noteId": note.note_id,
         "baseMetadata": dict(metadata),
         "contentFingerprint": workbook.content_fingerprint,
+        # A copy stays a copy after its original is gone, until it gets its own ID.
+        **({"copiedId": workbook.copied_id} if workbook.copied_id else {}),
         "sheetInventory": {
             "schemaVersion": 1,
             "sheets": [

@@ -34,6 +34,7 @@ from .adapters.ooxml import (
     inspect_workbook,
     write_properties,
 )
+from .copies import copy_warnings, separate_copies
 from .cover import plan_cover
 from .discovery import is_source_path_in_scope
 from .models import (
@@ -93,7 +94,10 @@ def _find_note(
         candidates.append(str(entry["notePath"]))
     if workbook.workbook_id:
         candidates.append(f"{workbook.source_root_id}:{workbook.workbook_id}")
-    candidates.extend([workbook.legacy_source_id, str(workbook.path.resolve()), workbook.path.name])
+    candidates.extend([workbook.legacy_source_id, str(workbook.path.resolve())])
+    # A copy may share its file name with the original; never borrow that note.
+    if not workbook.copied_id:
+        candidates.append(workbook.path.name)
     for candidate in candidates:
         matches = index.get(candidate.casefold(), [])
         if len(matches) == 1:
@@ -194,7 +198,8 @@ def run_status(config: AppConfig, sources: tuple[SourceConfig, ...]) -> list[Act
         except (WorkbookError, NoteError, OSError) as exc:
             actions.append(Action(status="read-error", source_root_id=source.id, message=str(exc)))
             continue
-        duplicates = _duplicate_ids(workbooks)
+        workbooks, unresolved = separate_copies(workbooks, state)
+        duplicates = _duplicate_ids(workbooks) | unresolved
         for workbook in workbooks:
             key, entry, match = find_entry(state, workbook)
             del key
@@ -210,7 +215,7 @@ def run_status(config: AppConfig, sources: tuple[SourceConfig, ...]) -> list[Act
                     source_path=workbook.relative_path,
                     workbook_id=workbook.workbook_id,
                     message=f"stateMatch={match}",
-                    details={"warnings": workbook.warnings},
+                    details={"warnings": [*workbook.warnings, *copy_warnings(workbook)]},
                 )
             )
         tracked_notes = {
@@ -254,12 +259,23 @@ def run_pull(
             actions.append(Action(status="read-error", source_root_id=source.id, message=str(exc)))
             continue
         index = _note_index(notes)
-        duplicates = _duplicate_ids(workbooks)
+        workbooks, unresolved = separate_copies(workbooks, state)
+        duplicates = _duplicate_ids(workbooks) | unresolved
         used_note_paths = {note.path.resolve() for note in notes}
         for workbook in workbooks:
             old_key, entry, matched_by = find_entry(state, workbook)
             if entry:
                 seen_state_keys.add(old_key)
+            if (
+                write_notes
+                and entry is not None
+                and workbook.copied_id
+                and entry.get("copiedId") != workbook.copied_id
+            ):
+                entry = {**entry, "copiedId": workbook.copied_id}
+                replace_entry(state, old_key=old_key, workbook=workbook, entry=entry)
+                old_key = state_key(workbook)
+                state_changed = True
             if workbook.read_status != "ok":
                 actions.append(
                     Action(
@@ -310,7 +326,7 @@ def run_pull(
                     max_workbook_mb=config.context.max_workbook_mb,
                 )
                 cover_details = {
-                    "warnings": [cover.warning] if cover.warning else [],
+                    "warnings": [*copy_warnings(workbook), *([cover.warning] if cover.warning else [])],
                     "cover": cover.details,
                 }
                 target = note_path(workbook, source)
@@ -445,7 +461,7 @@ def run_pull(
                 max_workbook_mb=config.context.max_workbook_mb,
             )
             cover_details = {
-                "warnings": [cover.warning] if cover.warning else [],
+                "warnings": [*copy_warnings(workbook), *([cover.warning] if cover.warning else [])],
                 "cover": cover.details,
             }
             preview = render_note(
@@ -594,7 +610,9 @@ def _find_workbook_for_note(note: ProxyNote, workbooks: list[WorkbookInfo]) -> W
     matches = [item for item in workbooks if item.relative_path.casefold() == filename]
     if len(matches) == 1:
         return matches[0]
-    matches = [item for item in workbooks if item.path.name.casefold() == filename]
+    matches = [
+        item for item in workbooks if not item.copied_id and item.path.name.casefold() == filename
+    ]
     return matches[0] if len(matches) == 1 else None
 
 
@@ -631,7 +649,8 @@ def run_push(
         except (WorkbookError, NoteError, OSError) as exc:
             record(Action(status="read-error", source_root_id=source.id, message=str(exc)))
             continue
-        duplicates = _duplicate_ids(workbooks)
+        workbooks, unresolved = separate_copies(workbooks, state)
+        duplicates = _duplicate_ids(workbooks) | unresolved
         for note in notes:
             workbook = _find_workbook_for_note(note, workbooks)
             if workbook is None:
@@ -948,6 +967,7 @@ def run_adopt(
 ) -> tuple[list[Action], Path | None]:
     del config
     actions: list[Action] = []
+    state = load_state(state_path())
     backup_dir = state_root() / "backups" / datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
     used_backup = False
     for source in sources:
@@ -956,7 +976,9 @@ def run_adopt(
         except (WorkbookError, OSError) as exc:
             actions.append(Action(status="read-error", source_root_id=source.id, message=str(exc)))
             continue
-        duplicates = _duplicate_ids(workbooks)
+        # A copy's inherited ID is replaced, so it is adopted like a workbook without one.
+        workbooks, unresolved = separate_copies(workbooks, state)
+        duplicates = _duplicate_ids(workbooks) | unresolved
         for workbook in workbooks:
             if workbook.workbook_id in duplicates:
                 actions.append(
@@ -983,6 +1005,9 @@ def run_adopt(
                         status="would-adopt",
                         source_root_id=source.id,
                         source_path=workbook.relative_path,
+                        message="Replaces an ID copied from another workbook."
+                        if workbook.copied_id
+                        else "",
                     )
                 )
             else:
@@ -1001,6 +1026,9 @@ def run_adopt(
                             source_path=workbook.relative_path,
                             workbook_id=workbook_id,
                             changed_fields=["TknExcelCatalogId"],
+                            message="Replaced an ID copied from another workbook."
+                            if workbook.copied_id
+                            else "",
                             details={"backups": [str(backup)]},
                         )
                     )

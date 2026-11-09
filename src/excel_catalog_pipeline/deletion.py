@@ -13,6 +13,7 @@ from typing import Any
 
 from .adapters.markdown import NoteError, discover_notes, read_note, workbook_path
 from .adapters.ooxml import WorkbookError, inspect_workbook
+from .copies import separate_copies
 from .discovery import is_source_path_in_scope
 from .models import Action, AppConfig, ProxyNote, SourceConfig, WorkbookInfo
 from .paths import state_path, state_root
@@ -157,6 +158,8 @@ def _source_exists(item: Deletion, workbooks: list[WorkbookInfo]) -> bool:
         or (
             fingerprint
             and (not workbook_id or not book.workbook_id)
+            # A copy of the original is a different workbook, not its moved file.
+            and not (workbook_id and book.copied_id == workbook_id)
             and book.content_fingerprint == fingerprint
         )
         for book in workbooks
@@ -203,7 +206,8 @@ def run_delete_notes(
     try:
         if (state_file.read_bytes() if _exists(state_file) else None) != original_state:
             raise NoteError("Synchronization state changed while loading.")
-        workbooks = _inventory(config.sources)
+        # A recorded copy holding the original's raw ID does not prove the original exists.
+        workbooks, _ = separate_copies(_inventory(config.sources), state)
         available: list[tuple[SourceConfig, ProxyNote]] = []
         for source in sources:
             if not source.note_root.is_dir():
