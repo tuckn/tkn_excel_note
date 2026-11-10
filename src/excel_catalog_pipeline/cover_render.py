@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import importlib
 import io
+import logging
 import math
 import uuid
 from pathlib import Path
@@ -17,6 +18,31 @@ from .excel_render import worksheet_snapshot
 
 RENDER_VERSION = 1
 MAX_PIXELS = 16_000_000
+# WebP cannot store a longer side; a lowered width must not make the height exceed it.
+MAX_LOWERED_HEIGHT = 16_383
+
+
+def raster_size(width: int, region_width: float, region_height: float) -> tuple[int, int]:
+    """Return the PNG size, lowering the width when a tall range would exceed MAX_PIXELS."""
+
+    def height_for(raster_width: int) -> int:
+        # Same operation order as before, so covers within the limit keep identical bytes.
+        return math.ceil(raster_width * region_height / region_width)
+
+    def too_large(raster_width: int) -> bool:
+        height = height_for(raster_width)
+        lowered = raster_width < width
+        return raster_width * height > MAX_PIXELS or (lowered and height > MAX_LOWERED_HEIGHT)
+
+    fitted = min(width, math.floor(math.sqrt(MAX_PIXELS * region_width / region_height)))
+    if fitted < width:
+        fitted = min(fitted, math.floor(MAX_LOWERED_HEIGHT * region_width / region_height))
+    fitted = max(1, fitted)
+    while fitted > 1 and too_large(fitted):
+        fitted -= 1
+    if too_large(fitted):
+        raise ContextError("Cover range is too tall; select a wider rectangle")
+    return fitted, height_for(fitted)
 
 
 def render_cover(data: bytes, extension: str, sheet: str, address: str, width: int) -> bytes:
@@ -59,8 +85,7 @@ def render_cover(data: bytes, extension: str, sheet: str, address: str, width: i
             setup.PrintComments = -4142  # xlPrintNoComments
             if max(region_width, region_height) > 12000:
                 raise ContextError("Cover range is too large; select a smaller rectangle")
-            if width * math.ceil(width * region_height / region_width) > MAX_PIXELS:
-                raise ContextError("Cover exceeds 16 million pixels; reduce width or range height")
+            raster_size(width, region_width, region_height)
             setup.Zoom = False
             setup.FitToPagesWide = 1
             setup.FitToPagesTall = 1
@@ -102,18 +127,20 @@ def render_cover(data: bytes, extension: str, sheet: str, address: str, width: i
                 crop = (left, bottom, page.get_width() - right, page.get_height() - top)
                 if min(crop) < 0 or min(crop_width, crop_height) <= 0:
                     raise ContextError("Cover rectangle does not fit the exported PDF page")
-                height = math.ceil(width * crop_height / crop_width)
-                if width * height > MAX_PIXELS:
-                    raise ContextError(
-                        "Cover exceeds 16 million pixels; reduce width or range height"
+                raster_width, height = raster_size(width, crop_width, crop_height)
+                if raster_width < width:
+                    # Keep every cell of a tall range; only the resolution drops.
+                    logging.getLogger(__name__).info(
+                        "Cover range is tall; rendering %d px wide to stay within 16 million pixels.",
+                        raster_width,
                     )
-                bitmap = page.render(scale=width / crop_width, crop=crop)
+                bitmap = page.render(scale=raster_width / crop_width, crop=crop)
                 try:
                     picture = bitmap.to_pil().convert("RGB")
                     try:
                         output = io.BytesIO()
-                        if picture.size != (width, height):
-                            resized = picture.resize((width, height))
+                        if picture.size != (raster_width, height):
+                            resized = picture.resize((raster_width, height))
                             picture.close()
                             picture = resized
                         picture.save(output, format="PNG")

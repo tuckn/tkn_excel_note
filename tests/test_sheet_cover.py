@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -303,8 +304,7 @@ def test_attachment_write_failure_does_not_publish_sheet_link(monkeypatch, tmp_p
     assert not note.exists() and not state.exists()
 
 
-def test_multi_page_render_is_rejected_and_temp_files_are_removed(monkeypatch, tmp_path):
-    from contextlib import contextmanager
+def fake_cover_sheet(width, height):
     from types import SimpleNamespace
 
     class Sheet:
@@ -322,7 +322,7 @@ def test_multi_page_render_is_rejected_and_temp_files_are_removed(monkeypatch, t
         )
 
         def Range(self, address):
-            return SimpleNamespace(Left=0, Top=0, Width=800, Height=750)
+            return SimpleNamespace(Left=0, Top=0, Width=width, Height=height)
 
         def ResetAllPageBreaks(self):
             pass
@@ -330,13 +330,20 @@ def test_multi_page_render_is_rejected_and_temp_files_are_removed(monkeypatch, t
         def ExportAsFixedFormat(self, **kwargs):
             Path(kwargs["Filename"]).write_bytes(b"test PDF")
 
+    return Sheet()
+
+
+def test_multi_page_render_is_rejected_and_temp_files_are_removed(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
     captured = []
 
     @contextmanager
     def session(snapshot, sheet):
         captured.append(snapshot)
         assert snapshot.is_file()
-        yield Sheet()
+        yield fake_cover_sheet(800, 750)
 
     class Document:
         def __len__(self):
@@ -355,6 +362,85 @@ def test_multi_page_render_is_rejected_and_temp_files_are_removed(monkeypatch, t
     with pytest.raises(ValueError, match="multiple pages"):
         cover_render.render_cover(workbook.read_bytes(), ".xlsx", "Data", "A1:Q50", 2400)
     assert len(captured) == 1 and not captured[0].parent.exists()
+
+
+def test_tall_cover_range_lowers_the_raster_width_instead_of_failing():
+    assert cover_render.raster_size(2400, 800, 750) == (2400, 2250)
+    # Within the limit the height keeps the earlier operation order (2688, not 2689).
+    assert cover_render.raster_size(2400, 500, 560) == (2400, math.ceil(2400 * 560 / 500))
+    assert cover_render.raster_size(2400, 500, 560)[1] == 2688
+    width, height = cover_render.raster_size(2400, 250, 750)
+    assert width < 2400 and height == math.ceil(width * 750 / 250)
+    assert width * height <= cover_render.MAX_PIXELS
+    wider = width + 1
+    assert wider * math.ceil(wider * 750 / 250) > cover_render.MAX_PIXELS
+    with pytest.raises(ValueError, match="too tall"):
+        cover_render.raster_size(2400, 1e-6, 12000)
+
+
+def test_very_tall_lowered_cover_still_fits_a_webp_preview():
+    from excel_catalog_pipeline.thumbnail import cover_webp
+
+    width, height = cover_render.raster_size(2400, 40, 900)
+    assert width * height <= cover_render.MAX_PIXELS
+    assert height <= cover_render.MAX_LOWERED_HEIGHT == 16_383
+    output = io.BytesIO()
+    Image.new("RGB", (width, height), "white").save(output, format="PNG")
+    # The default settings keep the full size, so WebP must accept the lowered raster.
+    with Image.open(io.BytesIO(cover_webp(output.getvalue()))) as preview:
+        assert preview.format == "WEBP" and preview.size == (width, height)
+
+
+def test_tall_cover_range_renders_every_cell_at_the_lower_width(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    @contextmanager
+    def session(snapshot, sheet):
+        yield fake_cover_sheet(250, 750)
+
+    renders = []
+
+    class Page:
+        def get_width(self):
+            return 266
+
+        def get_height(self):
+            return 766
+
+        def render(self, scale, crop):
+            renders.append((scale, crop))
+            size = (round(250 * scale), round(750 * scale))
+            return SimpleNamespace(
+                to_pil=lambda: Image.new("RGB", size, "white"), close=lambda: None
+            )
+
+        def close(self):
+            pass
+
+    class Document:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            return Page()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cover_render, "worksheet_snapshot", session)
+    monkeypatch.setattr(cover_render, "_remove_frame", lambda page, raw, color: (8, 8, 258, 758))
+    monkeypatch.setattr(
+        cover_render.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(PdfDocument=lambda path: Document()),
+    )
+    workbook = create_workbook(tmp_path / "book.xlsx")
+    image = cover_render.render_cover(workbook.read_bytes(), ".xlsx", "Data", "A1:Q50", 2400)
+    width, height = cover_render.raster_size(2400, 250, 750)
+    with Image.open(io.BytesIO(image)) as picture:
+        assert picture.size == (width, height)
+    assert renders == [(width / 250, (8, 8, 8, 8))]
 
 
 def test_measurement_frame_is_removed_without_removing_other_objects():
