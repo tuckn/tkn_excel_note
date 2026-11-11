@@ -223,6 +223,7 @@ tkn-excel-note export "C:\path\to\book.xlsx" --context
 
 画像化には、デスクトップ版 Excel を裏で起動します。
 ブックの一時コピーを開いて描画するため、元のブックや作業中の Excel は変更しません。
+Excel は画面に映らない専用のデスクトップで起動するため、Excel のウィンドウと PDF 出力の進捗ウィンドウ（「Publishing...」など）は画面に表示されません（「[画像化中の進捗ウィンドウ](docs/guides/sheet-content.md#画像化中の進捗ウィンドウ)」）。
 画像と抽出の根拠データは、Markdown と同じフォルダの `img/` に保存されます。
 Markdown を移動・共有するときは、`img/` も一緒に扱ってください。
 
@@ -492,6 +493,7 @@ cover 用の画像は既定で `notes.dir/thumbnails/` に WebP（可逆圧縮�
 既定では、Excel が保存時に埋め込んだサムネイル画像を使います。
 サムネイルがないブックや、特定の範囲を表示したい場合は、シートの指定範囲を画像化できます。
 この画像化は Excel を使いますが、AI は使いません。
+Excel の進捗ウィンドウは画面に表示されません（「[画像化中の進捗ウィンドウ](docs/guides/sheet-content.md#画像化中の進捗ウィンドウ)」）。
 
 ```shell
 tkn-excel-note pull --source library --cover sheet --cover-range "A1:Q50"
