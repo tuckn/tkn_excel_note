@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import multiprocessing
 import os
 import threading
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -203,22 +205,33 @@ def windows_on_screen() -> set[int]:
     return in_new_thread(collect)
 
 
+def in_new_process(function, *args):
+    """Run in a new interpreter. A thread that rendered a cover may stay on the hidden
+    desktop, and Excel started later from any thread of that process starts there too."""
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=1, mp_context=context) as pool:
+        return pool.submit(function, *args).result()
+
+
+def excel_on_screen(workbook: Path, hidden: bool) -> bool:
+    if not hidden:
+        excel_render._hidden_desktop = contextlib.nullcontext
+    with excel_render.worksheet_snapshot(workbook, "Data") as ws:
+        # EnumWindows also lists hidden windows, but only on the caller's desktop.
+        return int(ws.Application.Hwnd) in windows_on_screen()
+
+
+def cover(data: bytes, hidden: bool) -> bytes:
+    if not hidden:
+        excel_render._hidden_desktop = contextlib.nullcontext
+    return render_cover(data, ".xlsx", "Data", "A1:Q50", 600)
+
+
 @native
-def test_native_excel_is_off_screen_and_draws_the_same_cover(monkeypatch, tmp_path) -> None:
+def test_native_excel_is_off_screen_and_draws_the_same_cover(tmp_path) -> None:
     workbook = create_workbook(tmp_path / "synthetic.xlsx")
     data = workbook.read_bytes()
-
-    def excel_on_screen() -> bool:
-        with excel_render.worksheet_snapshot(workbook, "Data") as ws:
-            # EnumWindows also lists hidden windows, but only on the caller's desktop.
-            return int(ws.Application.Hwnd) in windows_on_screen()
-
-    def cover() -> bytes:
-        return render_cover(data, ".xlsx", "Data", "A1:Q50", 600)
-
-    hidden_cover = in_new_thread(cover)
-    assert in_new_thread(excel_on_screen) is False
-    monkeypatch.setattr(excel_render, "_hidden_desktop", contextlib.nullcontext)
-    assert in_new_thread(excel_on_screen) is True
-    assert in_new_thread(cover) == hidden_cover
+    assert in_new_process(excel_on_screen, workbook, True) is False
+    assert in_new_process(excel_on_screen, workbook, False) is True
+    assert in_new_process(cover, data, True) == in_new_process(cover, data, False)
     assert workbook.read_bytes() == data
