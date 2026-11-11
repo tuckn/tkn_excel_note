@@ -657,6 +657,7 @@ Python パッケージ名は `excel_catalog_pipeline` です。
 | 文書 | 読む目的 |
 | --- | --- |
 | [AI によるシート説明とブック要約](docs/guides/sheet-content.md) | AI 接続の準備、説明の再利用と保護、独自の文章 profile の作成 |
+| [多数のブックに AI の説明を付ける](docs/guides/bulk-context.md) | 一括実行の前に決める設定、進め方、止まったときの対処、処理に手間のかかるブックの形 |
 | [代理ノートの管理](docs/guides/catalog-operations.md) | cover 画像の設定、元ブックがないノートの削除、`.xls` の変換 |
 | [設定リファレンス](docs/reference/configuration.md) | すべての設定キー、既定値、設定ファイルの優先順位 |
 | [同期の仕様](docs/reference/synchronization.md) | 項目の対応、競合の解決、名前変更、状態と終了コード、レポート |
