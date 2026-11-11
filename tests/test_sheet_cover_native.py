@@ -112,3 +112,19 @@ def test_native_tall_cover_keeps_every_cell_at_a_lower_width(tmp_path):
         assert picture.height > 3 * picture.width
         assert_edges(picture)
     assert workbook_path.read_bytes() == data
+
+
+def test_native_password_protected_sheet_still_renders_a_cover(tmp_path):
+    def build(ws):
+        ws.Range("A1:Q50").ColumnWidth = 8
+        ws.Range("A1:Q50").RowHeight = 18
+        edge_colors(ws)
+        ws.Protect(Password="example", DrawingObjects=True, Contents=True, Scenarios=True)
+
+    workbook_path = tmp_path / "protected.xlsx"
+    data = synthetic_workbook(workbook_path, build)
+    image = render_cover(data, ".xlsx", "Overview", "A1:Q50", 2400)
+    with Image.open(io.BytesIO(image)) as picture:
+        assert picture.width == 2400
+        assert_edges(picture)
+    assert workbook_path.read_bytes() == data

@@ -54,7 +54,8 @@ def render_cover(data: bytes, extension: str, sheet: str, address: str, width: i
     with TemporaryDirectory(prefix="excel-note-cover-") as folder:
         root = Path(folder)
         snapshot = root / ("snapshot" + extension)
-        snapshot.write_bytes(rendering_snapshot(data))
+        # A protected sheet refuses the measuring frame below; the copy is discarded.
+        snapshot.write_bytes(rendering_snapshot(data, unprotect_sheets=True))
         pdf = root / "cover.pdf"
         with worksheet_snapshot(snapshot, sheet) as ws:
             area = ws.Range(address)

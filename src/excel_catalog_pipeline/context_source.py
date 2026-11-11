@@ -36,6 +36,41 @@ S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 X = "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}"
+# Comments, CDATA and processing instructions are matched only to be kept as they are.
+# Quoted attribute values may contain ">" or "/>". sheetProtection has no children, but
+# an empty element with a closing tag is valid XML.
+SHEET_PROTECTION = re.compile(
+    rb"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>"
+    rb"|<((?:[\w.-]+:)?)sheetProtection(?=[\s/>])"
+    rb"(?:\s+[\w.:-]+\s*=\s*(?:\"[^\"]*\"|'[^']*'))*\s*"
+    rb"(?:/>|>\s*</\1sheetProtection\s*>)",
+    re.DOTALL,
+)
+
+
+def _drop_sheet_protection(match: re.Match[bytes]) -> bytes:
+    return match.group(0) if match.group(1) is None else b""
+
+
+def _without_sheet_protection(content: bytes) -> bytes:
+    """Drop the worksheet's own protection, or return the XML unchanged if not exact."""
+    try:
+        before = ET.fromstring(content)
+    except ET.ParseError:
+        return content
+    protections = len(before.findall(S + "sheetProtection"))
+    if not protections:
+        return content
+    changed = SHEET_PROTECTION.sub(_drop_sheet_protection, content)
+    try:
+        after = ET.fromstring(changed)
+    except ET.ParseError:
+        return content
+    # Only the protection directly under <worksheet> may go; anything else keeps the XML.
+    removed = sum(1 for _ in before.iter()) - sum(1 for _ in after.iter())
+    if removed != protections or after.find(S + "sheetProtection") is not None:
+        return content
+    return changed
 
 
 class ContextError(ValueError):
@@ -313,8 +348,12 @@ def _xml_attributes(content: bytes, local_name: str, attributes: dict[str, str])
     return pattern.sub(replace, content)
 
 
-def rendering_snapshot(data: bytes) -> bytes:
-    """Disable recalculation and refresh-on-open only in the disposable render copy."""
+def rendering_snapshot(data: bytes, *, unprotect_sheets: bool = False) -> bytes:
+    """Disable recalculation and refresh-on-open only in the disposable render copy.
+
+    With unprotect_sheets, worksheet protection is also dropped from the copy, so a
+    renderer can add temporary shapes. Protection does not change how cells print.
+    """
     output = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(output, "w") as target:
         if any(name.startswith("xl/macrosheets/") for name in source.namelist()):
@@ -358,5 +397,12 @@ def rendering_snapshot(data: bytes) -> bytes:
                         tag,
                         {"refreshOnLoad": "0", "enableRefresh": "0", "backgroundRefresh": "0"},
                     )
+            elif (
+                unprotect_sheets
+                and entry.filename.startswith("xl/worksheets/")
+                and entry.filename.endswith(".xml")
+                and b"\x00" not in content[:100]
+            ):
+                content = _without_sheet_protection(content)
             target.writestr(entry, content)
     return output.getvalue()

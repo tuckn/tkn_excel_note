@@ -484,6 +484,89 @@ def test_shared_string_formatting_invalidates_context(tmp_path: Path) -> None:
     assert first["fingerprint"] != second["fingerprint"]
 
 
+def test_render_snapshot_drops_sheet_protection_only_when_asked(tmp_path: Path) -> None:
+    data = create_workbook(tmp_path / "book.xlsx").read_bytes()
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        sheet = archive.read("xl/worksheets/sheet1.xml")
+    for protection in (
+        b'<sheetProtection algorithmName="SHA-512" hashValue="aGFzaA==" saltValue="c2FsdA==" '
+        b'spinCount="100000" sheet="1" objects="1" scenarios="1"/>',
+        b'<x:sheetProtection xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        b'sheet="1" objects="1"></x:sheetProtection>',
+        b'<sheetProtection xmlns:meta="urn:example:meta" meta:note="a/>b>c" sheet="1">'
+        b"</sheetProtection>",
+    ):
+        protected = sheet.replace(b"</sheetData>", b"</sheetData>" + protection)
+        assert protected != sheet
+        changed = rewrite_package(data, {"xl/worksheets/sheet1.xml": protected})
+        with zipfile.ZipFile(io.BytesIO(rendering_snapshot(changed))) as archive:
+            assert archive.read("xl/worksheets/sheet1.xml") == protected
+        unprotected = rendering_snapshot(changed, unprotect_sheets=True)
+        with (
+            zipfile.ZipFile(io.BytesIO(rendering_snapshot(changed))) as kept,
+            zipfile.ZipFile(io.BytesIO(unprotected)) as archive,
+        ):
+            assert archive.read("xl/worksheets/sheet1.xml") == sheet
+            for name in archive.namelist():
+                if name != "xl/worksheets/sheet1.xml":
+                    assert archive.read(name) == kept.read(name)
+
+
+def test_render_snapshot_keeps_protection_text_in_cells_and_comments(tmp_path: Path) -> None:
+    data = create_workbook(tmp_path / "book.xlsx").read_bytes()
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        sheet = archive.read("xl/worksheets/sheet1.xml")
+    text = b'<c r="C1" t="inlineStr"><is><t><![CDATA[<sheetProtection sheet="1"/>]]></t></is></c>'
+    with_text = sheet.replace(b"</row>", text + b"</row>")
+    commented = with_text.replace(
+        b"</sheetData>",
+        b'</sheetData><!-- <sheetProtection sheet="1"> --><?note <sheetProtection/> ?>',
+    )
+    protected = commented.replace(
+        b"<?note", b'<sheetProtection sheet="1" objects="1">\n</sheetProtection><?note'
+    )
+    assert with_text != sheet and protected != commented
+    for before, after in ((with_text, with_text), (commented, commented), (protected, commented)):
+        changed = rewrite_package(data, {"xl/worksheets/sheet1.xml": before})
+        with zipfile.ZipFile(
+            io.BytesIO(rendering_snapshot(changed, unprotect_sheets=True))
+        ) as archive:
+            assert archive.read("xl/worksheets/sheet1.xml") == after
+
+
+def test_render_snapshot_keeps_other_elements_named_like_sheet_protection(tmp_path: Path) -> None:
+    data = create_workbook(tmp_path / "book.xlsx").read_bytes()
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        sheet = archive.read("xl/worksheets/sheet1.xml")
+    extension = (
+        b'<extLst><ext uri="urn:example:ext" xmlns:m="urn:example:metadata">'
+        b'<m:sheetProtection sheet="1"/><m:sheetProtection-info sheet="1"/></ext></extLst>'
+    )
+    decoys = sheet.replace(b"</worksheet>", extension + b"</worksheet>")
+    protected = decoys.replace(b"</sheetData>", b'</sheetData><sheetProtection sheet="1"/>')
+    assert decoys != sheet and protected != decoys
+    # Unprotected: nothing changes. Protected with a look-alike: keep the XML rather than guess.
+    for before in (decoys, protected):
+        changed = rewrite_package(data, {"xl/worksheets/sheet1.xml": before})
+        with zipfile.ZipFile(
+            io.BytesIO(rendering_snapshot(changed, unprotect_sheets=True))
+        ) as archive:
+            assert archive.read("xl/worksheets/sheet1.xml") == before
+    # A look-alike only in its name is not matched, so the real protection still goes.
+    only_name = sheet.replace(
+        b"</sheetData>",
+        b'</sheetData><sheetProtection sheet="1"/>',
+    ).replace(
+        b"</worksheet>",
+        b'<extLst><ext uri="urn:example:ext" xmlns:m="urn:example:metadata">'
+        b'<m:sheetProtection-info sheet="1"/></ext></extLst></worksheet>',
+    )
+    expected = only_name.replace(b'<sheetProtection sheet="1"/>', b"")
+    changed = rewrite_package(data, {"xl/worksheets/sheet1.xml": only_name})
+    with zipfile.ZipFile(io.BytesIO(rendering_snapshot(changed, unprotect_sheets=True))) as archive:
+        assert archive.read("xl/worksheets/sheet1.xml") == expected
+
+
 def test_render_snapshot_preserves_ignorable_namespace_declarations(tmp_path: Path) -> None:
     data = create_workbook(tmp_path / "book.xlsx").read_bytes()
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
