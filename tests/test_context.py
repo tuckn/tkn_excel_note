@@ -1099,6 +1099,39 @@ def test_evidence_too_long_after_rendering_is_rendered_again_with_ranges_summari
     assert len(saved_evidence(note)["cells"]) == 22
 
 
+def test_rendering_is_retried_with_each_stronger_summary(build_setup, monkeypatch) -> None:
+    _, _, note, _, calls, run = build_setup
+    offered = []
+
+    def shortened(evidence, data, sheet, config):  # type: ignore[no-untyped-def]
+        # Long data ranges first, then repeated tables, then nothing more.
+        offered.append(len(evidence.get("dataSummaries", [])))
+        stages = [
+            [{"range": "A1:B11"}],
+            [{"range": "A1:B11"}, {"range": "D1:E40", "repeatedBlocks": 4}],
+        ]
+        step = len(evidence.get("dataSummaries", []))
+        return {**evidence, "dataSummaries": stages[step]} if step < len(stages) else None
+
+    rendered = []
+
+    def render(snapshot, evidence, output, config):  # type: ignore[no-untyped-def]
+        rendered.append(len(evidence.get("dataSummaries", [])))
+        if rendered[-1] < 2:
+            raise ImageLimitError(
+                "Rendering exceeds generation.limits.max_images; no AI was called"
+            )
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "001.png").write_bytes(b"fixture image")
+        return [{"image": "001.png", "range": "$A$1:$B$11", "overview": False}]
+
+    monkeypatch.setattr(context, "shortened_evidence", shortened)
+    monkeypatch.setattr(context, "render_sheet", render)
+    result = run()["results"][0]
+    assert result["status"] == "written" and result["summarizedRanges"] == ["A1:B11", "D1:E40"]
+    assert rendered == [0, 1, 2] and offered == [0, 1] and calls == ["Data"]
+
+
 def test_image_limit_still_skips_a_sheet_without_long_ranges(build_setup, monkeypatch) -> None:
     _, _, note, _, calls, run = build_setup
     before = note.read_bytes()

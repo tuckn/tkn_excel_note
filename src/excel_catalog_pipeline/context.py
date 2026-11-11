@@ -705,23 +705,30 @@ def build_context(
                     snapshot.write_bytes(rendering_snapshot(data))
                     logger.info("Rendering sheet %s with native Excel.", sheet["name"])
                     try:
-                        try:
-                            images = _draw(snapshot, evidence, images_dir, relative_dir, config)
-                        except (ImageLimitError, InputLimitError) as exc:
-                            # Too many images, or evidence too long once layout is added.
-                            shorter = shortened_evidence(
-                                _before_rendering(evidence), data, sheet, config
-                            )
-                            if shorter is None:
-                                raise
-                            logger.info(
-                                "Sheet %s: %s; rendering again with long data ranges summarized.",
-                                sheet["name"],
-                                exc,
-                            )
-                            evidence = shorter
-                            describe(result, evidence)
-                            images = _draw(snapshot, evidence, images_dir, relative_dir, config)
+                        while True:
+                            try:
+                                images = _draw(snapshot, evidence, images_dir, relative_dir, config)
+                                break
+                            except (ImageLimitError, InputLimitError) as exc:
+                                # Too many images, or evidence too long once layout is
+                                # added. Each retry summarizes more: long data ranges,
+                                # then repeated tables; then there is nothing left to try.
+                                shorter = shortened_evidence(
+                                    _before_rendering(evidence), data, sheet, config
+                                )
+                                if shorter is None:
+                                    raise
+                                repeated = any(
+                                    "repeatedBlocks" in item for item in shorter["dataSummaries"]
+                                )
+                                logger.info(
+                                    "Sheet %s: %s; rendering again with %s summarized.",
+                                    sheet["name"],
+                                    exc,
+                                    "repeated tables" if repeated else "long data ranges",
+                                )
+                                evidence = shorter
+                                describe(result, evidence)
                     except ImageLimitError as exc:
                         if exc.wider_scale is None:
                             skip(result, exc)

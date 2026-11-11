@@ -172,6 +172,28 @@ def _overflow_bounds(ws: Any, area: Any, text: str, box: Box) -> Box:
     return Box(box.left, box.top, box.left + width, box.bottom)
 
 
+def _cell_boxes(ws: Any, cells: list[dict[str, Any]]) -> list[Box]:
+    """Measure the cells to draw, adding their bounds and displayed text."""
+    boxes = []
+    for cell in cells:
+        # Summarized evidence gives some cells as text only (see context_tables).
+        if cell.get("inImages") is False:
+            continue
+        area = ws.Range(cell["cell"])
+        if area.EntireRow.Hidden or area.EntireColumn.Hidden:
+            cell["hidden"] = True
+            continue
+        if area.MergeCells:
+            area = area.MergeArea
+        box = _box(area)
+        if cell["type"] in {"s", "str", "inlineStr"}:
+            box = _overflow_bounds(ws, area, str(ws.Range(cell["cell"]).Text), box)
+        boxes.append(box)
+        cell["boundsPoints"] = vars(box)
+        cell["displayText"] = str(ws.Range(cell["cell"]).Text)
+    return boxes
+
+
 def render_sheet(
     snapshot: Path, evidence: dict[str, Any], output: Path, config: ContextConfig
 ) -> list[dict[str, Any]]:
@@ -197,20 +219,7 @@ def _render_in_excel(
         ) from exc
     output.mkdir(parents=True, exist_ok=True)
     with worksheet_snapshot(snapshot, evidence["sheet"]) as ws:
-        boxes = []
-        for cell in evidence["cells"]:
-            area = ws.Range(cell["cell"])
-            if area.EntireRow.Hidden or area.EntireColumn.Hidden:
-                cell["hidden"] = True
-                continue
-            if area.MergeCells:
-                area = area.MergeArea
-            box = _box(area)
-            if cell["type"] in {"s", "str", "inlineStr"}:
-                box = _overflow_bounds(ws, area, str(ws.Range(cell["cell"]).Text), box)
-            boxes.append(box)
-            cell["boundsPoints"] = vars(box)
-            cell["displayText"] = str(ws.Range(cell["cell"]).Text)
+        boxes = _cell_boxes(ws, evidence["cells"])
         native_shapes = []
         if ws.Shapes.Count > config.max_objects:
             raise SheetSkipError("Native shape count exceeds generation.limits.max_objects")

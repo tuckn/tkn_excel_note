@@ -178,6 +178,202 @@ def test_excel_table_names_its_columns_and_keeps_cells_beside_it(tmp_path: Path)
     assert "D30" in kept and "A30" not in kept
 
 
+def statements(months: int, *, blank_rows: int = 1) -> dict:
+    """Monthly blocks of a title, a header, five rows, two totals rows, then blank rows."""
+    cells = []
+    row = 1
+    for month in range(months):
+        cells.append(text(f"A{row}", f"Statement {month + 1}"))
+        cells += [
+            text(f"A{row + 1}", "Date"),
+            text(f"B{row + 1}", "Amount"),
+            text(f"C{row + 1}", "Shop"),
+        ]
+        row += 2
+        for day in range(5):
+            cells += [
+                number(
+                    f"A{row}",
+                    str(45000 + month * 31 + day),
+                    display=f"2023-{month + 1:02d}-{day + 1:02d}",
+                ),
+                number(f"B{row}", str(100 * (month + 1) + day)),
+                text(f"C{row}", "Store" if day % 2 else "Market"),
+            ]
+            row += 1
+        # Totals use other columns, so they form small blocks of their own.
+        cells += [text(f"E{row}", "Total"), number(f"F{row}", str(500 * (month + 1)))]
+        cells += [text(f"E{row + 1}", "Paid"), number(f"F{row + 1}", str(500 * (month + 1)))]
+        row += 2 + blank_rows
+    return {"sheet": "Cards", "sheetId": "1", "cells": cells, "objects": [], "styles": {"0": {}}}
+
+
+def test_repeated_blocks_are_summarized_as_one_range_only_when_asked() -> None:
+    evidence = statements(12)
+    # No block is long enough on its own.
+    assert summarize_tables(evidence, []) is None
+    result = summarize_tables(evidence, [], repeated=True)
+    assert result is not None
+    summary = result["dataSummaries"][0]
+    assert summary["range"] == "A2:C117" and summary["repeatedBlocks"] == 12
+    assert summary["headerRows"] == "A2:C2" and summary["dataRows"] == 60
+    # The first ten data rows span two blocks; the totals between them are not data.
+    assert summary["keptRows"] == "3-7, 13-17"
+    assert summary["summarizedRows"] == ", ".join(
+        f"{3 + 10 * m}-{7 + 10 * m}" for m in range(2, 12)
+    )
+    date, amount, shop = summary["columns"]
+    assert date["header"] == "Date" and date["types"] == {"date": 60}
+    assert (date["earliest"], date["latest"]) == ("2023-01-01", "2023-12-05")
+    assert amount["max"] == "1204" and shop["mostCommon"] == [["Market", 36], ["Store", 24]]
+    assert "repeatedBlocks" in result["dataSummaryPolicy"]
+    kept = {cell["cell"]: cell for cell in result["cells"]}
+    # Titles, later headers and totals stay; data rows after the first ten do not.
+    assert {"A1", "A11", "A12", "C17", "E18", "F19", "A111", "C112", "F119"} <= set(kept)
+    assert not {"A23", "B27", "C117"} & set(kept)
+    assert len(kept) == 12 + 36 + 30 + 48
+    # Below the kept rows, through the last block, cells are text only, so the images
+    # cover the first blocks. The last totals lie below the range and are drawn.
+    assert {name for name, cell in kept.items() if cell.get("inImages") is False} == {
+        name for name in kept if 18 <= int(name[1:]) <= 117
+    }
+    assert all("inImages" not in cell for cell in evidence["cells"])
+
+
+def test_blocks_too_far_apart_are_not_one_range() -> None:
+    # Title, two totals rows and blank rows lie between blocks.
+    assert summarize_tables(statements(12, blank_rows=7), [], repeated=True) is not None
+    assert summarize_tables(statements(12, blank_rows=8), [], repeated=True) is None
+
+
+def with_ledger_below(evidence: dict) -> dict:
+    """Add ledger(60) at A131:C191, 13 rows below the last block of statements(12)."""
+    evidence["cells"] += [
+        {**cell, "cell": cell["cell"][0] + str(int(cell["cell"][1:]) + 130)}
+        for cell in ledger(60)["cells"]
+    ]
+    return evidence
+
+
+def test_long_ranges_below_repeated_blocks_stay_ranges_of_their_own() -> None:
+    # The same columns, but too far below the last block to be another block.
+    result = summarize_tables(with_ledger_below(statements(12)), [], repeated=True)
+    assert result is not None
+    assert [(item["range"], item.get("repeatedBlocks")) for item in result["dataSummaries"]] == [
+        ("A2:C117", 12),
+        ("A131:C191", None),
+    ]
+    assert result["dataSummaries"][1]["keptRows"] == "132-141"
+
+
+def test_tables_with_other_headers_are_not_one_range() -> None:
+    def tables(headers: list[tuple[str, str]]) -> dict:
+        cells = []
+        for index, (key, value) in enumerate(headers):
+            top = 1 + index * 14
+            cells += [text(f"A{top}", key), text(f"B{top}", value)]
+            for row in range(top + 1, top + 13):
+                cells += [text(f"A{row}", f"{key} {row}"), number(f"B{row}", str(row))]
+        return {"cells": cells, "objects": []}
+
+    same = tables([("Item", "Price")] * 3)
+    assert summarize_tables(same, [], repeated=True)["dataSummaries"][0]["repeatedBlocks"] == 3
+    other = tables([("Item", "Price"), ("Sensor", "Temperature"), ("Task", "Minutes")])
+    assert summarize_tables(other, [], repeated=True) is None
+
+
+def test_titles_just_above_headers_are_not_headers() -> None:
+    cells = []
+    row = 1
+    for month in range(12):
+        # The title shares half the columns of the two-column header.
+        cells += [text(f"A{row}", f"Month {month + 1}"), text(f"A{row + 1}", "Item")]
+        cells.append(text(f"B{row + 1}", "Price"))
+        for item in range(5):
+            cells += [text(f"A{row + 2 + item}", f"Item {item}"), number(f"B{row + 2 + item}", "9")]
+        row += 8
+    result = summarize_tables({"cells": cells, "objects": []}, [], repeated=True)
+    assert result is not None
+    summary = result["dataSummaries"][0]
+    assert summary["repeatedBlocks"] == 12 and summary["dataRows"] == 60
+    assert summary["range"] == "A2:B95" and summary["headerRows"] == "A2:B2"
+    assert [column["header"] for column in summary["columns"]] == ["Item", "Price"]
+
+
+def test_totals_between_many_blocks_stay_cells() -> None:
+    # Sixteen pairs of totals rows repeat too, but lie between the statement blocks.
+    result = summarize_tables(statements(16), [], repeated=True)
+    assert result is not None
+    assert [item["range"] for item in result["dataSummaries"]] == ["A2:C157"]
+    kept = {cell["cell"] for cell in result["cells"]}
+    assert {"E138", "F138", "F139"} <= kept
+
+
+def test_tables_beside_repeated_blocks_keep_their_images() -> None:
+    evidence = statements(12)
+    evidence["cells"] += [text("H30", "Id"), text("I30", "Kind")]
+    for row in range(31, 91):
+        evidence["cells"] += [number(f"H{row}", str(row)), text(f"I{row}", "x")]
+    side = DataRange(
+        30, 90, 8, 9, header_rows=1, table="Side", names=["Id", "Kind"], excel_table=True
+    )
+    result = summarize_tables(evidence, [side], repeated=True)
+    assert result is not None
+    kept = {cell["cell"]: cell for cell in result["cells"]}
+    assert {"H30", "H31", "I40"} <= set(kept) and "H41" not in kept
+    assert all("inImages" not in kept[name] for name in ("H30", "H31", "I40"))
+    assert kept["E28"]["inImages"] is False
+
+
+def test_cells_beside_block_rows_keep_their_images_but_rows_between_do_not() -> None:
+    evidence = statements(12)
+    # K44:L45 sits beside the data rows of the fifth block; K49 between two blocks.
+    evidence["cells"] += [text("K44", "Memo"), number("L44", "1"), number("K45", "2")]
+    evidence["cells"].append(text("K49", "Between"))
+    result = summarize_tables(evidence, [], repeated=True)
+    assert result is not None
+    kept = {cell["cell"]: cell for cell in result["cells"]}
+    assert all("inImages" not in kept[name] for name in ("K44", "L44", "K45"))
+    assert kept["K49"]["inImages"] is False and kept["A41"]["inImages"] is False
+
+
+def test_fit_summarizes_repeated_blocks_only_when_long_ranges_are_not_enough(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tables_module, "read_tables", lambda data, part: [])
+    fitted = fit_evidence(ledger(60), b"", {"part": ""}, ContextConfig(max_cells=50))
+    assert "repeatedBlocks" not in fitted["dataSummaries"][0]
+    fitted = fit_evidence(statements(12), b"", {"part": ""}, ContextConfig(max_cells=200))
+    assert fitted["dataSummaries"][0]["repeatedBlocks"] == 12
+    with pytest.raises(SheetSkipError, match="still does not fit"):
+        fit_evidence(statements(12), b"", {"part": ""}, ContextConfig(max_cells=100))
+    shorter = shortened_evidence(statements(12), b"", {"part": ""}, ContextConfig())
+    assert shorter is not None and shorter["dataSummaries"][0]["repeatedBlocks"] == 12
+
+
+def test_text_only_cells_are_not_measured_for_images() -> None:
+    from types import SimpleNamespace
+
+    from excel_catalog_pipeline.context_render import _cell_boxes
+
+    def area(address: str) -> SimpleNamespace:
+        hidden = SimpleNamespace(Hidden=False)
+        return SimpleNamespace(
+            EntireRow=hidden,
+            EntireColumn=hidden,
+            MergeCells=False,
+            Left=0,
+            Top=0,
+            Width=10,
+            Height=10,
+            Text=address,
+        )
+
+    cells = [number("A1", "1"), {**number("A2", "2"), "inImages": False}]
+    assert len(_cell_boxes(SimpleNamespace(Range=area), cells)) == 1
+    assert cells[0]["displayText"] == "A1" and "boundsPoints" not in cells[1]
+
+
 def test_fit_uses_full_evidence_while_it_fits_and_summarizes_otherwise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -194,10 +390,27 @@ def test_fit_uses_full_evidence_while_it_fits_and_summarizes_otherwise(
 
 def test_shortened_evidence_is_offered_once(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tables_module, "read_tables", lambda data, part: [])
+    monkeypatch.setattr(tables_module, "extract_sheet", lambda *args, **kwargs: ledger(60))
     shorter = shortened_evidence(ledger(60), b"", {"part": ""}, ContextConfig())
     assert shorter is not None and shorter["dataSummaries"]
+    # Read again, the sheet has no repeated blocks to summarize instead.
     assert shortened_evidence(shorter, b"", {"part": ""}, ContextConfig()) is None
     assert shortened_evidence(ledger(5), b"", {"part": ""}, ContextConfig()) is None
+
+
+def test_drawn_evidence_too_long_after_long_ranges_turns_to_repeated_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    full = with_ledger_below(statements(12))
+    monkeypatch.setattr(tables_module, "read_tables", lambda data, part: [])
+    monkeypatch.setattr(tables_module, "extract_sheet", lambda *args, **kwargs: full)
+    # Before drawing, summarizing the long range alone was enough (309 cells).
+    first = fit_evidence(full, b"", {"part": ""}, ContextConfig(max_cells=310))
+    assert [item.get("repeatedBlocks") for item in first["dataSummaries"]] == [None]
+    shorter = shortened_evidence(first, b"", {"part": ""}, ContextConfig(max_cells=310))
+    assert shorter is not None
+    assert [item.get("repeatedBlocks") for item in shorter["dataSummaries"]] == [12, None]
+    assert shortened_evidence(shorter, b"", {"part": ""}, ContextConfig()) is None
 
 
 def test_charts_are_described_for_evidence_without_images(tmp_path: Path) -> None:
