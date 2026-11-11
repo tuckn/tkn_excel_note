@@ -2404,7 +2404,7 @@ requires-dist = [
     { name = "pypdfium2", marker = "sys_platform == 'win32'", specifier = ">=4.30" },
     { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=308" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "tkn-genai-bridge", url = "https://github.com/tuckn/tkn_genai_bridge/archive/848769a4842ceacd20875ba0934cdd0fc478dc2e.zip" },
+    { name = "tkn-genai-bridge", url = "https://github.com/tuckn/tkn_genai_bridge/archive/27ac8e48c8038ee86e029f5b845cd41f6da121af.zip" },
 ]
 
 [package.metadata.requires-dev]
@@ -2419,7 +2419,7 @@ dev = [
 [[package]]
 name = "tkn-genai-bridge"
 version = "0.11.0"
-source = { url = "https://github.com/tuckn/tkn_genai_bridge/archive/848769a4842ceacd20875ba0934cdd0fc478dc2e.zip" }
+source = { url = "https://github.com/tuckn/tkn_genai_bridge/archive/27ac8e48c8038ee86e029f5b845cd41f6da121af.zip" }
 dependencies = [
     { name = "azure-identity" },
     { name = "httpx" },
@@ -2430,7 +2430,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "referencing" },
 ]
-sdist = { hash = "sha256:fda5f08fa1b7fc940de0a71819327d46386feca2a60a430883ce79f034cf4080" }
+sdist = { hash = "sha256:2e9633fb0377d75ca18dc598bb90c6b07fe3a3aa0b58dbe87adb7243ab3b7149" }
 
 [package.metadata]
 requires-dist = [

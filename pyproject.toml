@@ -14,7 +14,7 @@ dependencies = [
   "PyYAML>=6.0.2",
   "jsonschema>=4.23,<5",
   "pydantic>=2.10,<3",
-  "tkn-genai-bridge @ https://github.com/tuckn/tkn_genai_bridge/archive/848769a4842ceacd20875ba0934cdd0fc478dc2e.zip",
+  "tkn-genai-bridge @ https://github.com/tuckn/tkn_genai_bridge/archive/27ac8e48c8038ee86e029f5b845cd41f6da121af.zip",
   "pywin32>=308; sys_platform == 'win32'",
   "pypdfium2>=4.30; sys_platform == 'win32'",
   "Pillow>=11.0; sys_platform == 'win32'",
