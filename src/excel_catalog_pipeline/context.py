@@ -460,6 +460,10 @@ def _save_generation(
     }
 
 
+# Added to cells by rendering (see context_render._cell_boxes).
+RENDERED_CELL_KEYS = {"boundsPoints", "displayText", "hidden"}
+
+
 def _draw(
     snapshot: Path,
     evidence: dict[str, Any],
@@ -477,7 +481,17 @@ def _draw(
 
 
 def _before_rendering(evidence: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in evidence.items() if key not in {"images", "nativeShapes"}}
+    """Evidence without what rendering added, so its size is checked as if not yet drawn."""
+    result = {
+        key: value
+        for key, value in evidence.items()
+        if key not in {"images", "nativeShapes", "layoutPolicy"}
+    }
+    result["cells"] = [
+        {key: value for key, value in cell.items() if key not in RENDERED_CELL_KEYS}
+        for cell in evidence["cells"]
+    ]
+    return result
 
 
 def _replace_note(note: Path, original: bytes, encoded: bytes) -> None:

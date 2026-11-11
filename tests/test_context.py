@@ -16,7 +16,7 @@ from excel_catalog_pipeline.adapters.markdown import note_path, render_note
 from excel_catalog_pipeline.adapters.ooxml import inspect_workbook
 from excel_catalog_pipeline.config import DEFAULT_CONFIG, ConfigError, validate_config
 from excel_catalog_pipeline.context_profiles import load_context_profile, render_context
-from excel_catalog_pipeline.context_render import Box, tile_boxes, wider_tiles
+from excel_catalog_pipeline.context_render import Box, _cell_boxes, tile_boxes, wider_tiles
 from excel_catalog_pipeline.context_source import (
     ContextError,
     ImageLimitError,
@@ -107,6 +107,66 @@ def test_image_limit_names_the_smallest_wider_tiles_that_fit() -> None:
     returned = pickle.loads(pickle.dumps(raised.value))
     assert type(returned) is ImageLimitError and returned.wider_scale == 1.75
     assert str(returned) == str(raised.value)
+
+
+def test_cell_layout_is_short_and_shown_text_only_when_it_differs() -> None:
+    from types import SimpleNamespace
+
+    shown = {"A1": "Plan", "A2": "12%", "A3": "####", "A4": "#N/A"}
+
+    def area(address: str) -> SimpleNamespace:
+        visible = SimpleNamespace(Hidden=False)
+        return SimpleNamespace(
+            EntireRow=visible,
+            EntireColumn=visible,
+            MergeCells=False,
+            # Excel gives positions in single precision.
+            Left=10.123456789,
+            Top=20.25,
+            Width=30.0,
+            Height=14.25,
+            Text=shown[address],
+        )
+
+    cells = [
+        {"cell": "A1", "text": "Plan", "type": "n", "style": "0"},
+        {"cell": "A2", "text": "0.12", "type": "n", "style": "0"},
+        {"cell": "A3", "text": "1234567", "display": "1234567", "type": "n", "style": "0"},
+        {"cell": "A4", "text": "#N/A", "type": "e", "style": "0"},
+    ]
+    boxes = _cell_boxes(SimpleNamespace(Range=area), cells)
+    assert len(boxes) == 4
+    # [left, top, right, bottom], to 0.1 point and without the tile flag of Box.
+    assert cells[0]["boundsPoints"] == [10.1, 20.2, 40.1, 34.5]
+    # Excel's text is given only when it says more than the value or display already does.
+    assert {cell["cell"]: cell.get("displayText") for cell in cells} == {
+        "A1": None,
+        "A2": "12%",
+        "A3": "####",
+        "A4": None,
+    }
+
+
+def test_rendering_again_starts_from_evidence_without_the_earlier_layout() -> None:
+    drawn = {
+        "sheet": "Data",
+        "cells": [
+            {"cell": "A1", "text": "1", "boundsPoints": [0, 0, 1, 1], "displayText": "1.0"},
+            {"cell": "A2", "text": "2", "hidden": True},
+        ],
+        "images": [{"image": "001.png"}],
+        "nativeShapes": [],
+        "layoutPolicy": "boundsPoints are ...",
+        "formulaPolicy": "kept",
+    }
+    before = context._before_rendering(drawn)
+    assert before == {
+        "sheet": "Data",
+        "cells": [{"cell": "A1", "text": "1"}, {"cell": "A2", "text": "2"}],
+        "formulaPolicy": "kept",
+    }
+    # The drawn evidence is left as it was.
+    assert drawn["cells"][0]["displayText"] == "1.0" and "images" in drawn
 
 
 @pytest.mark.parametrize(

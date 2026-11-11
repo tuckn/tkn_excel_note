@@ -311,11 +311,16 @@ def test_native_render_sheet_renders_in_the_child_and_returns_layout(tmp_path):
     images = context_render.render_sheet(snapshot, evidence, output, ContextConfig())
     assert [image["image"] for image in images] == ["001.png"]
     assert (output / "001.png").stat().st_size > 0
-    assert {cell["cell"]: cell["displayText"] for cell in evidence["cells"]} == {
-        "A1": "Catalog entry",
-        "B1": "42",
+    # Excel shows the saved values as they are, so no displayText repeats them.
+    assert {
+        cell["cell"]: (len(cell["boundsPoints"]), cell.get("displayText"))
+        for cell in evidence["cells"]
+    } == {
+        "A1": (4, None),
+        "B1": (4, None),
     }
     assert evidence["nativeShapes"] == []
+    assert evidence["layoutPolicy"] == context_render.LAYOUT_POLICY
     snapshot.unlink()
 
 

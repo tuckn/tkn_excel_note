@@ -32,6 +32,20 @@ class Box:
         )
 
 
+# Layout details stay short: on a sheet of thousands of cells they would otherwise
+# double the evidence sent to the AI.
+LAYOUT_POLICY = (
+    "boundsPoints are [left, top, right, bottom] in points from the top-left corner of the "
+    "sheet. displayText is the text Excel shows in a cell; it is left out when it equals the "
+    "cell's display, or its text when the cell has no display."
+)
+
+
+def _bounds(box: Box) -> list[float]:
+    """[left, top, right, bottom] in points, to 0.1 point, as LAYOUT_POLICY describes."""
+    return [round(value, 1) for value in (box.left, box.top, box.right, box.bottom)]
+
+
 # Tile enlargements tried when a sheet does not fit generation.limits.max_images. Each
 # tile is still printed on one page, so text shrinks; past half size it is unreadable.
 WIDER_TILE_SCALES = (1.25, 1.5, 1.75, 2.0)
@@ -186,11 +200,13 @@ def _cell_boxes(ws: Any, cells: list[dict[str, Any]]) -> list[Box]:
         if area.MergeCells:
             area = area.MergeArea
         box = _box(area)
+        shown = str(ws.Range(cell["cell"]).Text)
         if cell["type"] in {"s", "str", "inlineStr"}:
-            box = _overflow_bounds(ws, area, str(ws.Range(cell["cell"]).Text), box)
+            box = _overflow_bounds(ws, area, shown, box)
         boxes.append(box)
-        cell["boundsPoints"] = vars(box)
-        cell["displayText"] = str(ws.Range(cell["cell"]).Text)
+        cell["boundsPoints"] = _bounds(box)
+        if shown != cell.get("display", cell.get("text")):
+            cell["displayText"] = shown
     return boxes
 
 
@@ -232,9 +248,10 @@ def _render_in_excel(
             box = Box(box.left, box.top, max(box.left + 1, box.right), max(box.top + 1, box.bottom))
             boxes.append(box)
             native_shapes.append(
-                {"name": str(shape.Name), "boundsPoints": vars(box), "type": int(shape.Type)}
+                {"name": str(shape.Name), "boundsPoints": _bounds(box), "type": int(shape.Type)}
             )
         evidence["nativeShapes"] = native_shapes
+        evidence["layoutPolicy"] = LAYOUT_POLICY
         regions = tile_boxes(boxes, config)
         ws.ResetAllPageBreaks()
         setup = ws.PageSetup
@@ -310,7 +327,7 @@ def _render_in_excel(
                 {
                     "image": png.name,
                     "range": address,
-                    "boundsPoints": vars(_box(ws.Range(address))),
+                    "boundsPoints": _bounds(_box(ws.Range(address))),
                     "overview": region.overview,
                 }
             )
