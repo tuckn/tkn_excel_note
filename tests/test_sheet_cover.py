@@ -451,7 +451,10 @@ def test_measurement_frame_is_removed_without_removing_other_objects():
 
     def obj(color):
         return SimpleNamespace(
-            raw=color, get_bounds=lambda: (1, 2, 301, 202), close=lambda: closed.append(color)
+            raw=color,
+            level=0,
+            get_bounds=lambda: (1, 2, 301, 202),
+            close=lambda: closed.append(color),
         )
 
     other, frame = obj((12, 23, 34)), obj((42, 84, 126))
@@ -470,6 +473,36 @@ def test_measurement_frame_is_removed_without_removing_other_objects():
     with pytest.raises(ValueError, match="uniquely"):
         cover_render._remove_frame(page, raw, frame.raw)
     assert not removed
+
+
+def test_camera_copies_of_the_frame_are_removed_with_it():
+    from types import SimpleNamespace
+
+    color = (42, 84, 126)
+    removed = []
+
+    def obj(level, bounds):
+        return SimpleNamespace(
+            raw=color, level=level, get_bounds=lambda: bounds, close=lambda: None
+        )
+
+    def stroke_color(color, *pointers):
+        for pointer, value in zip(pointers, (*color, 255), strict=True):
+            pointer._obj.value = value
+        return True
+
+    raw = SimpleNamespace(FPDF_PAGEOBJ_PATH=2, FPDFPageObj_GetStrokeColor=stroke_color)
+    # A linked picture of cells under the frame draws a copy inside a Form XObject.
+    copy, frame = obj(1, (-14, -110, 229, 296)), obj(0, (8, 27, 1042, 834))
+    page = SimpleNamespace(get_objects=lambda **kwargs: [copy, frame], remove_obj=removed.append)
+    assert cover_render._remove_frame(page, raw, color) == (8, 27, 1042, 834)
+    assert removed == [copy, frame]
+    for objects in ([copy, copy], [frame, frame, copy]):
+        removed.clear()
+        page.get_objects = lambda objects=objects, **kwargs: objects
+        with pytest.raises(ValueError, match="uniquely"):
+            cover_render._remove_frame(page, raw, color)
+        assert not removed
 
 
 def test_isolated_excel_session_closes_only_its_workbook_on_failure(monkeypatch):

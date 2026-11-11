@@ -165,10 +165,15 @@ def _remove_frame(page: Any, raw: Any, color: tuple[int, ...]) -> tuple[float, f
             and tuple(value.value for value in rgba[:3]) == color
         ):
             frames.append(obj)
-    if len(frames) != 1:
+    # A linked picture (Excel's camera) of cells under the frame draws a copy of the
+    # frame inside a Form XObject. Only the frame itself is on the page's top level.
+    outer = [obj for obj in frames if obj.level == 0]
+    if len(frames) != 1 and len(outer) != 1:
         raise ContextError("Could not uniquely locate the cover rectangle in the PDF")
-    frame = frames[0]
+    frame = frames[0] if len(frames) == 1 else outer[0]
     bounds = frame.get_bounds()
-    page.remove_obj(frame)
-    frame.close()
+    # Copies go too, so the frame never shows in the picture of the cells.
+    for obj in frames:
+        page.remove_obj(obj)
+        obj.close()
     return float(bounds[0]), float(bounds[1]), float(bounds[2]), float(bounds[3])

@@ -114,6 +114,31 @@ def test_native_tall_cover_keeps_every_cell_at_a_lower_width(tmp_path):
     assert workbook_path.read_bytes() == data
 
 
+def test_native_camera_picture_inside_the_cover_still_renders_it(tmp_path):
+    source = tmp_path / "placeholder.png"
+    Image.new("RGB", (8, 8), (200, 200, 200)).save(source)
+
+    def build(ws):
+        ws.Range("A1:Q50").ColumnWidth = 8
+        ws.Range("A1:Q50").RowHeight = 18
+        ws.Range("A1:D5").Value = "Source"
+        edge_colors(ws)
+        # A linked picture of cells under the measuring frame also draws the frame.
+        picture = ws.Pictures().Insert(str(source))
+        picture.Left, picture.Top = ws.Range("H20").Left, ws.Range("H20").Top
+        picture.Formula = "=$A$1:$D$5"
+
+    workbook_path = tmp_path / "camera.xlsx"
+    data = synthetic_workbook(workbook_path, build)
+    image = render_cover(data, ".xlsx", "Overview", "A1:Q50", 2400)
+    with Image.open(io.BytesIO(image)) as picture:
+        assert picture.width == 2400
+        assert_edges(picture)
+    # Frames of other colors leave no trace, not even inside the linked picture.
+    assert render_cover(data, ".xlsx", "Overview", "A1:Q50", 2400) == image
+    assert workbook_path.read_bytes() == data
+
+
 def test_native_password_protected_sheet_still_renders_a_cover(tmp_path):
     def build(ws):
         ws.Range("A1:Q50").ColumnWidth = 8
