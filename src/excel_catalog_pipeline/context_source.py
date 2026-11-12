@@ -15,6 +15,7 @@ from xml.etree import ElementTree as ET
 from .adapters.cell_styles import (
     StyleTable,
     dxf_references,
+    element_bytes,
     serial_text,
     used_style_indices,
     uses_1904_dates,
@@ -150,9 +151,12 @@ PANE_STATE_ATTRIBUTES = ("topLeftCell", "activePane")
 
 def without_view_state(root: ET.Element) -> bytes:
     """Serialize a worksheet without its selected tab, selection, scroll position and zoom."""
-    views = root.find(S + "sheetViews")
-    if views is None:
+    if root.find(S + "sheetViews") is None:
         return ET.tostring(root)
+    return ET.tostring(_neutral_copy(root))
+
+
+def _neutral_copy(root: ET.Element) -> ET.Element:
     neutral = copy.deepcopy(root)
     for view in neutral.iter(S + "sheetView"):
         for name in VIEW_STATE_ATTRIBUTES:
@@ -162,7 +166,62 @@ def without_view_state(root: ET.Element) -> bytes:
         for pane in view.findall(S + "pane"):
             for name in PANE_STATE_ATTRIBUTES:
                 pane.attrib.pop(name, None)
+    return neutral
+
+
+def _content_xml(root: ET.Element, shared_entries: list[ET.Element], styles: StyleTable) -> bytes:
+    """The worksheet without view state and without the numbering Excel may redo on save.
+
+    Cell, row and column formats and differential formats are written as tokens, shared
+    strings as hashes of their content; merged ranges are put in order.
+    """
+    neutral = _neutral_copy(root)
+    strings: dict[int, str] = {}
+    for element in neutral.iter():
+        if element.tag == S + "c":
+            style = element.get("s", "0")
+            if style.isdigit():
+                element.set("s", styles.token(int(style)))
+            value = element.find(S + "v")
+            if element.get("t") == "s" and value is not None and (value.text or "").isdigit():
+                index = int(value.text or "")
+                if index < len(shared_entries):
+                    # A hash, not the text: many cells may repeat one long string.
+                    if index not in strings:
+                        strings[index] = hashlib.sha256(
+                            element_bytes(shared_entries[index])
+                        ).hexdigest()
+                    value.text = strings[index]
+        elif element.tag in {S + "row", S + "col"}:
+            name = "s" if element.tag == S + "row" else "style"
+            if element.get(name, "").isdigit():
+                element.set(name, styles.token(int(element.get(name, ""))))
+    styles.name_dxfs(neutral)
+    for merges in neutral.iter(S + "mergeCells"):
+        merges[:] = sorted(merges, key=lambda item: item.get("ref", ""))
     return ET.tostring(neutral)
+
+
+DXF_REFERENCE = re.compile(rb"dxfid", re.IGNORECASE)
+
+
+def _content_part(content: bytes, styles: StyleTable) -> bytes:
+    """A part related to the sheet, without the numbering Excel may redo on save.
+
+    Differential format references (tables, pivot tables) become tokens, and a pivot
+    table loses its cache number, which Excel renumbers on every save.
+    """
+    if not DXF_REFERENCE.search(content) and b"pivotTableDefinition" not in content:
+        return content
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        return content
+    changed = styles.name_dxfs(root)
+    if root.tag.rsplit("}", 1)[-1] == "pivotTableDefinition" and "cacheId" in root.attrib:
+        del root.attrib["cacheId"]
+        changed = True
+    return ET.tostring(root) if changed else content
 
 
 def extract_sheet(
@@ -175,8 +234,11 @@ def extract_sheet(
 ) -> dict[str, Any]:
     """Cells, drawings and fingerprints of one worksheet.
 
-    `fingerprint` ignores view state; `legacyFingerprint` hashes the saved XML as it is,
-    as earlier versions did, so their records can still be recognized. `max_cells=None`
+    `fingerprint` ignores view state and the numbering Excel may redo when it saves:
+    style and shared string positions, pivot cache numbers and the order of merged
+    ranges. Earlier versions' records can still be recognized: `previousFingerprint`
+    ignores only view state, and `legacyFingerprint` hashes the saved XML as it is.
+    `max_cells=None`
     reads every cell, for callers that shorten long data ranges themselves.
     `include_charts` adds chart types and series ranges, for evidence without images.
     """
@@ -260,10 +322,14 @@ def extract_sheet(
         # and styles are limited to used entries, so edits elsewhere in the workbook
         # (new strings, new cell formats) do not mark this sheet as changed.
         digest = hashlib.sha256()
+        previous_digest = hashlib.sha256()
         legacy_digest = hashlib.sha256()
 
-        def update(chunk: bytes, legacy_chunk: bytes | None = None) -> None:
-            digest.update(chunk)
+        def update(
+            chunk: bytes, legacy_chunk: bytes | None = None, content_chunk: bytes | None = None
+        ) -> None:
+            digest.update(chunk if content_chunk is None else content_chunk)
+            previous_digest.update(chunk)
             legacy_digest.update(chunk if legacy_chunk is None else legacy_chunk)
         pending = [sheet["part"]]
         if "xl/theme/theme1.xml" in archive.namelist():
@@ -278,9 +344,11 @@ def extract_sheet(
             content = archive.read(part)
             update(part.encode())
             if part == sheet["part"]:
-                update(without_view_state(root), content)
+                update(
+                    without_view_state(root), content, _content_xml(root, shared_entries, styles)
+                )
             else:
-                update(content)
+                update(content, content_chunk=_content_part(content, styles))
             if part.endswith(".xml"):
                 with contextlib.suppress(ET.ParseError):
                     dxf_ids |= dxf_references(ET.fromstring(content))
@@ -290,8 +358,12 @@ def extract_sheet(
             if rel_path in archive.namelist():
                 update(archive.read(rel_path))
             pending.extend(sorted(relationships(archive, part).values()))
-        update(repr(sorted(used_strings.items())).encode())
-        update(b"styles\0" + styles.identity(used_style_indices(root), dxf_ids))
+        # The content fingerprint has strings and styles in the sheet XML already.
+        update(repr(sorted(used_strings.items())).encode(), content_chunk=b"")
+        update(
+            b"styles\0" + styles.identity(used_style_indices(root), dxf_ids),
+            content_chunk=b"styles\0" + styles.content_identity(dxf_ids),
+        )
         update(sheet["name"].encode())
         workbook_properties = ET.fromstring(archive.read("xl/workbook.xml")).find(S + "workbookPr")
         if workbook_properties is not None:
@@ -308,6 +380,7 @@ def extract_sheet(
             "cells": cells,
             "objects": objects,
             "fingerprint": digest.hexdigest(),
+            "previousFingerprint": previous_digest.hexdigest(),
             "legacyFingerprint": legacy_digest.hexdigest(),
             "warnings": warnings,
             "formulaPolicy": "Saved cached values; no refresh or recalculation requested.",

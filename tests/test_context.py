@@ -854,7 +854,7 @@ def test_chart_sheet_is_skipped_and_the_other_sheets_are_described(build_setup) 
     assert calls == ["Data"]
 
 
-@pytest.mark.parametrize("version", [2, 3])
+@pytest.mark.parametrize("version", [2, 3, 4])
 def test_earlier_records_are_reused_and_upgraded(build_setup, version) -> None:
     source, workbook, _, state, calls, run = build_setup
     assert run()["results"][0]["status"] == "written"
@@ -865,18 +865,21 @@ def test_earlier_records_are_reused_and_upgraded(build_setup, version) -> None:
     arguments = (evidence, load_context_profile(ContextConfig()), ContextConfig(), Profile())
     assert record["inputKey"] == context._input_key(*arguments)
     assert record["sourceFingerprint"] == evidence["fingerprint"]
-    # Earlier versions hashed the saved sheet XML; version 2 also hashed 24 images.
+    # Version 4 hashed Excel's style and string numbers; versions 2 and 3 hashed the saved
+    # sheet XML, and version 2 also hashed 24 images.
+    fingerprint = evidence["previousFingerprint" if version == 4 else "legacyFingerprint"]
     identity = {
         **context._input_identity(*arguments),
-        "sourceFingerprint": evidence["legacyFingerprint"],
+        "sourceFingerprint": fingerprint,
         "version": version,
     }
     if version == 2:
         identity["rendering"] = {**identity["rendering"], "max_images": 24}
     legacy = context._key(identity)
-    assert legacy in context._legacy_input_keys(*arguments, evidence["legacyFingerprint"])
+    earlier_fingerprints = {key: evidence[key] for key in context.EARLIER_FINGERPRINTS}
+    assert legacy in context._legacy_input_keys(*arguments, earlier_fingerprints)
     assert legacy != record["inputKey"]
-    earlier = {**record, "inputKey": legacy, "sourceFingerprint": evidence["legacyFingerprint"]}
+    earlier = {**record, "inputKey": legacy, "sourceFingerprint": fingerprint}
     path.write_text(json.dumps(earlier), encoding="utf-8")
     assert run(dry_run=True)["results"][0]["status"] == "cached"
     assert json.loads(path.read_text(encoding="utf-8")) == earlier
@@ -899,7 +902,16 @@ def test_earlier_records_are_reused_and_upgraded(build_setup, version) -> None:
     assert calls == ["Data"]
 
 
-def test_summary_treats_an_earlier_fingerprint_as_current(build_setup) -> None:
+def test_earlier_fingerprints_are_neither_sent_nor_saved(build_setup) -> None:
+    _, _, note, _, _, run = build_setup
+    run()
+    saved = saved_evidence(note)
+    assert saved["fingerprint"]
+    assert not set(context.EARLIER_FINGERPRINTS) & set(saved)
+
+
+@pytest.mark.parametrize("earlier", ["previousFingerprint", "legacyFingerprint"])
+def test_summary_treats_an_earlier_fingerprint_as_current(build_setup, earlier) -> None:
     _, workbook, note, state, _, run = build_setup
     run()
     path = next(state.rglob("sheet-1.json"))
@@ -907,7 +919,7 @@ def test_summary_treats_an_earlier_fingerprint_as_current(build_setup) -> None:
     evidence = extract_sheet(data, sheet_list(data)[0], max_cells=10000, max_objects=10000)
     record = json.loads(path.read_text(encoding="utf-8"))
     path.write_text(
-        json.dumps({**record, "sourceFingerprint": evidence["legacyFingerprint"]}), encoding="utf-8"
+        json.dumps({**record, "sourceFingerprint": evidence[earlier]}), encoding="utf-8"
     )
     text = note.read_bytes().decode("utf-8-sig")
     notes = context._collect_context(text, note, data, ContextConfig(), path.parent)
@@ -1140,7 +1152,8 @@ def test_evidence_too_long_after_rendering_is_rendered_again_with_ranges_summari
     )
     data = workbook.read_bytes()
     full = extract_sheet(data, sheet_list(data)[0], max_cells=None, max_objects=10)
-    full.pop("legacyFingerprint")
+    for key in context.EARLIER_FINGERPRINTS:
+        full.pop(key)
     limit = len(context.evidence_payload(full, None)[0]) + 2000
     rendered = []
 

@@ -300,9 +300,13 @@ def _generator_identity(connection: Profile) -> dict[str, Any]:
     return identity
 
 
-# Versions 2 and 3 hashed the saved sheet XML with its view state (legacyFingerprint);
-# version 2 also hashed generation.limits.max_images, which config allows from 1 to 100.
+# Version 4 hashed the sheet with the style and string numbers Excel may redo on save
+# (previousFingerprint). Versions 2 and 3 hashed the saved sheet XML with its view state
+# (legacyFingerprint); version 2 also hashed generation.limits.max_images, which config
+# allows from 1 to 100.
 LEGACY_MAX_IMAGES = range(1, 101)
+# Kept apart from the evidence, so they are neither sent to the AI nor saved.
+EARLIER_FINGERPRINTS = ("previousFingerprint", "legacyFingerprint")
 
 
 def _input_identity(
@@ -327,7 +331,7 @@ def _input_key(
     evidence: dict[str, Any], writing: Any, config: ContextConfig, connection: Profile
 ) -> str:
     """Identify what the AI was given and asked; templates and limits only gate or display it."""
-    return _key({"version": 4, **_input_identity(evidence, writing, config, connection)})
+    return _key({"version": 5, **_input_identity(evidence, writing, config, connection)})
 
 
 def _legacy_input_keys(
@@ -335,14 +339,16 @@ def _legacy_input_keys(
     writing: Any,
     config: ContextConfig,
     connection: Profile,
-    legacy_fingerprint: str,
+    earlier: dict[str, str],
 ) -> set[str]:
-    """Earlier keys for the same input: version 3, and version 2 per max_images value."""
-    identity = {
-        **_input_identity(evidence, writing, config, connection),
-        "sourceFingerprint": legacy_fingerprint,
-    }
-    return {_key({**identity, "version": 3})} | {
+    """Earlier keys for the same input: versions 4 and 3, and version 2 per max_images value.
+
+    `earlier` holds the sheet's previousFingerprint and legacyFingerprint.
+    """
+    current = _input_identity(evidence, writing, config, connection)
+    previous = {**current, "sourceFingerprint": earlier["previousFingerprint"], "version": 4}
+    identity = {**current, "sourceFingerprint": earlier["legacyFingerprint"]}
+    return {_key(previous), _key({**identity, "version": 3})} | {
         _key(
             {
                 **identity,
@@ -548,7 +554,7 @@ def build_context(
     # A sheet over a per-sheet limit has its long data ranges summarized; one that still
     # does not fit is skipped. Any other problem stops the workbook.
     prepared: list[dict[str, Any] | SheetSkipError] = []
-    legacy_fingerprints: dict[str, str] = {}
+    earlier_fingerprints: dict[str, dict[str, str]] = {}
     for sheet in selected:
         try:
             evidence = extract_sheet(
@@ -558,8 +564,9 @@ def build_context(
                 max_objects=config.max_objects,
                 include_charts=text_only,
             )
-            # Kept apart so it is neither sent to the AI nor saved as evidence.
-            legacy_fingerprints[sheet["id"]] = evidence.pop("legacyFingerprint")
+            earlier_fingerprints[sheet["id"]] = {
+                key: evidence.pop(key) for key in EARLIER_FINGERPRINTS
+            }
             if text_only:
                 # Without Excel, an empty sheet is found here instead of while rendering.
                 if not any(
@@ -632,7 +639,7 @@ def build_context(
             if state.get("inputKey") not in {None, key} and state.get(
                 "inputKey"
             ) in _legacy_input_keys(
-                evidence, writing, config, connection, legacy_fingerprints[sheet["id"]]
+                evidence, writing, config, connection, earlier_fingerprints[sheet["id"]]
             ):
                 state = {**state, "inputKey": key, "sourceFingerprint": evidence["fingerprint"]}
                 if not dry_run:
@@ -922,7 +929,10 @@ def _collect_context(
                     evidence = extract_sheet(
                         data, sheet, max_cells=None, max_objects=config.max_objects
                     )
-                    fingerprints = {evidence["fingerprint"], evidence["legacyFingerprint"]}
+                    fingerprints = {
+                        evidence["fingerprint"],
+                        *(evidence[key] for key in EARLIER_FINGERPRINTS),
+                    }
                     status = "current" if saved["sourceFingerprint"] in fingerprints else "stale"
                 except ContextError:
                     status = "unverified"

@@ -285,6 +285,175 @@ def test_fingerprint_tracks_custom_table_style_formats(tmp_path: Path) -> None:
     assert extract_sheet(recolored, sheet, max_cells=100, max_objects=100)["fingerprint"] != original
 
 
+MERGES = '<mergeCells count="2"><mergeCell ref="A5:B5"/><mergeCell ref="C5:D5"/></mergeCells>'
+RULE = (
+    '<conditionalFormatting sqref="C1"><cfRule type="cellIs" dxfId="0" priority="1" '
+    'operator="greaterThan"><formula>0</formula></cfRule></conditionalFormatting>'
+)
+BOLD = "<dxf><font><b/></font></dxf>"
+RED = '<dxf><fill><patternFill><bgColor rgb="FFFF0000"/></patternFill></fill></dxf>'
+PIVOT = f'<pivotTableDefinition xmlns="{MAIN}" name="P1" cacheId="0" dataCaption="Values"/>'
+TABLE = (
+    f'<table xmlns="{MAIN}" id="1" name="T" displayName="T" ref="A7:B8">'
+    '<tableColumns count="2"><tableColumn id="1" name="a" dataDxfId="0"/>'
+    '<tableColumn id="2" name="b" dataDxfId="1"/></tableColumns></table>'
+)
+PARTS = {
+    "sheet": "xl/worksheets/sheet1.xml",
+    "styles": "xl/styles.xml",
+    "shared": "xl/sharedStrings.xml",
+    "pivot": "xl/pivotTables/pivotTable1.xml",
+    "table": "xl/tables/table1.xml",
+}
+
+
+def numbered_book(path: Path) -> bytes:
+    """styled_book with merged ranges, a conditional format, a table and a pivot table."""
+    rels = SHEET_RELS.replace(
+        "</Relationships>",
+        f'<Relationship Id="pivot" Type="{REL}/pivotTable" '
+        'Target="../pivotTables/pivotTable1.xml"/>'
+        f'<Relationship Id="table" Type="{REL}/table" Target="../tables/table1.xml"/>'
+        "</Relationships>",
+    )
+    dxfs = '<dxfs count="2">' + BOLD + RED + "</dxfs>"
+    return rewrite_package(
+        styled_book(path).read_bytes(),
+        {
+            PARTS["sheet"]: SHEET.replace("</sheetData>", "</sheetData>" + MERGES + RULE).encode(),
+            PARTS["styles"]: STYLES.replace("</styleSheet>", dxfs + "</styleSheet>").encode(),
+            "xl/worksheets/_rels/sheet1.xml.rels": rels.encode(),
+            PARTS["pivot"]: PIVOT.encode(),
+            PARTS["table"]: TABLE.encode(),
+        },
+    )
+
+
+def edited(data: bytes, part: str, edit) -> bytes:  # type: ignore[no-untyped-def]
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        text = archive.read(PARTS[part]).decode()
+    changed = edit(text)
+    assert changed != text
+    return rewrite_package(data, {PARTS[part]: changed.encode()})
+
+
+def swapped(text: str, first: str, second: str) -> str:
+    assert first in text and second in text
+    return text.replace(first, "\0").replace(second, first).replace("\0", second)
+
+
+def swapped_lines(text: str, first: str, second: str) -> str:
+    """Swap the two lines that start with `first` and `second`."""
+    lines = text.split("\n")
+    a = next(i for i, line in enumerate(lines) if line.startswith(first))
+    b = next(i for i, line in enumerate(lines) if line.startswith(second))
+    lines[a], lines[b] = lines[b], lines[a]
+    return "\n".join(lines)
+
+
+def renumbered_sheet(text: str) -> str:
+    # Formats 1 and 4, strings 0 and 1 and the two differential formats change places.
+    text = swapped(text, 's="1"', 's="4"')
+    text = text.replace('<c r="A1" t="s"><v>0</v>', '<c r="A1" t="s"><v>1</v>')
+    text = text.replace('<c r="D2" s="1" t="s"><v>1</v>', '<c r="D2" s="1" t="s"><v>0</v>')
+    text = swapped(text, '<mergeCell ref="A5:B5"/>', '<mergeCell ref="C5:D5"/>')
+    return text.replace('dxfId="0"', 'dxfId="1"')
+
+
+def renumbered(data: bytes) -> bytes:
+    """What Excel may write for the same sheet: formats, strings and differential formats
+    in other positions, merged ranges in another order and a new pivot cache number."""
+    data = edited(
+        data,
+        "styles",
+        lambda text: swapped(
+            swapped_lines(text, '<xf numFmtId="14"', '<xf numFmtId="0" fontId="1"'), BOLD, RED
+        ),
+    )
+    data = edited(data, "shared", lambda text: swapped_lines(text, "<si><t>", "<si><r>"))
+    data = edited(data, "sheet", renumbered_sheet)
+    data = edited(data, "table", lambda text: swapped(text, 'dataDxfId="0"', 'dataDxfId="1"'))
+    return edited(data, "pivot", lambda text: text.replace('cacheId="0"', 'cacheId="4"'))
+
+
+def test_fingerprint_ignores_numbering_excel_redoes_on_save(tmp_path: Path) -> None:
+    data = numbered_book(tmp_path / "book.xlsx")
+    sheet = sheet_list(data)[0]
+    original = extract_sheet(data, sheet, max_cells=100, max_objects=100)
+    again = extract_sheet(renumbered(data), sheet, max_cells=100, max_objects=100)
+    assert again["fingerprint"] == original["fingerprint"]
+    # Earlier versions saw a changed sheet.
+    assert again["previousFingerprint"] != original["previousFingerprint"]
+    assert again["cells"] != original["cells"]
+
+
+GENERAL_TO_WHOLE_NUMBER = [
+    # General shows 1.25 as it is; the format code "0" shows 1.
+    (
+        "styles",
+        lambda text: text.replace(
+            "</numFmts>", '<numFmt numFmtId="177" formatCode="0"/></numFmts>'
+        ).replace(
+            "</cellXfs>", '<xf numFmtId="177" fontId="0" fillId="0" borderId="0"/></cellXfs>'
+        ),
+    ),
+    ("sheet", lambda text: text.replace('<c r="C1">', '<c r="C1" s="5">')),
+]
+
+
+def test_fingerprint_still_sees_what_the_numbers_point_to(tmp_path: Path) -> None:
+    data = numbered_book(tmp_path / "book.xlsx")
+    sheet = sheet_list(data)[0]
+    original = extract_sheet(data, sheet, max_cells=100, max_objects=100)["fingerprint"]
+    for edits in [
+        # Another cell format, a changed format, a changed string.
+        [("sheet", lambda text: text.replace('<c r="B1" s="1">', '<c r="B1" s="2">'))],
+        [("styles", lambda text: text.replace('indent="2"', 'indent="3"'))],
+        [("shared", lambda text: text.replace("<t>Rich</t>", "<t>Poor</t>"))],
+        GENERAL_TO_WHOLE_NUMBER,
+        # Another merged range, another differential format, a changed one.
+        [("sheet", lambda text: text.replace('ref="C5:D5"', 'ref="C5:E5"'))],
+        [("sheet", lambda text: text.replace('dxfId="0"', 'dxfId="1"'))],
+        [("styles", lambda text: text.replace(BOLD, "<dxf><font><i/></font></dxf>"))],
+        # The table columns swap their formats; the conditional format keeps its own.
+        [
+            ("styles", lambda text: swapped(text, BOLD, RED)),
+            ("sheet", lambda text: text.replace('dxfId="0"', 'dxfId="1"')),
+        ],
+        # A pivot table setting other than its cache number.
+        [("pivot", lambda text: text.replace('name="P1"', 'name="P2"'))],
+    ]:
+        changed = data
+        for part, edit in edits:
+            changed = edited(changed, part, edit)
+        assert (
+            extract_sheet(changed, sheet, max_cells=100, max_objects=100)["fingerprint"] != original
+        )
+
+
+def test_fingerprint_sees_the_default_format_of_blank_cells(tmp_path: Path) -> None:
+    # Every saved cell has its own format, but blank cells show the default one.
+    sheet_xml = (
+        f'<worksheet xmlns="{MAIN}"><sheetData>'
+        '<row r="1"><c r="A1" s="3"><v>1</v></c></row></sheetData></worksheet>'
+    )
+    data = rewrite_package(
+        styled_book(tmp_path / "book.xlsx").read_bytes(), {PARTS["sheet"]: sheet_xml.encode()}
+    )
+    sheet = sheet_list(data)[0]
+    original = extract_sheet(data, sheet, max_cells=100, max_objects=100)["fingerprint"]
+    filled = edited(
+        data,
+        "styles",
+        lambda text: text.replace(
+            '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>',
+            '<xf numFmtId="0" fontId="0" fillId="2" borderId="0"/>',
+            1,
+        ),
+    )
+    assert extract_sheet(filled, sheet, max_cells=100, max_objects=100)["fingerprint"] != original
+
+
 def test_conditional_and_signed_sections_decide_date_display() -> None:
     from excel_catalog_pipeline.adapters.cell_styles import applied_section
 

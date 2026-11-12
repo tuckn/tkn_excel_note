@@ -602,6 +602,7 @@ def shortened_evidence(
         if any("repeatedBlocks" in item for item in summaries):
             return None
         evidence = extract_sheet(data, sheet, max_cells=None, max_objects=config.max_objects)
+        evidence.pop("previousFingerprint", None)
         evidence.pop("legacyFingerprint", None)
         modes = (True,)
     summarized, problem = _summaries(evidence, data, sheet, config, modes)

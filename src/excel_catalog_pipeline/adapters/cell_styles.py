@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import re
 import zipfile
 from collections.abc import Iterable
@@ -198,6 +200,19 @@ def _color(element: ET.Element | None) -> str | None:
     return None
 
 
+def element_bytes(element: ET.Element) -> bytes:
+    """The element as XML, without the text that follows it (`tail`).
+
+    Line breaks between saved elements are formatting, not content.
+    """
+    tail = element.tail
+    element.tail = None
+    try:
+        return ET.tostring(element)
+    finally:
+        element.tail = tail
+
+
 class StyleTable:
     """Saved style definitions from xl/styles.xml; missing parts resolve to defaults."""
 
@@ -221,6 +236,7 @@ class StyleTable:
         self.table_style_dxfs = dxf_references(table_styles) if table_styles is not None else set()
         self._kinds: dict[int, str] = {}
         self._descriptions: dict[int, dict[str, Any]] = {}
+        self._tokens: dict[int, str] = {}
 
     @classmethod
     def read(cls, archive: zipfile.ZipFile) -> StyleTable:
@@ -362,6 +378,79 @@ class StyleTable:
             if 0 <= index < len(self.dxfs):
                 parts.append(f"dxf{index}:".encode() + ET.tostring(self.dxfs[index]))
         parts.extend(ET.tostring(item) for item in self.shared)
+        return b"\0".join(parts)
+
+    # Excel may renumber cell formats and differential formats when it saves a workbook.
+    # Tokens name a format by what it contains, so renumbering alone keeps them.
+
+    def token(self, index: int) -> str:
+        """The cell format at `index`, with its font, fill, border, number format and
+        cell style written out instead of their positions in styles.xml."""
+        if index not in self._tokens:
+            xf = self._xf(index)
+            content = b"missing" if xf is None else self._written_out(xf, parent=True)
+            self._tokens[index] = hashlib.sha256(content).hexdigest()
+        return self._tokens[index]
+
+    def _written_out(self, xf: ET.Element, *, parent: bool) -> bytes:
+        element = copy.deepcopy(xf)
+        parts: list[bytes] = []
+        for attribute, items in (
+            ("fontId", self.fonts),
+            ("fillId", self.fills),
+            ("borderId", self.borders),
+        ):
+            value = element.attrib.pop(attribute, None)
+            item = self._item(items, value)
+            parts.append(
+                attribute.encode()
+                + b":"
+                + (element_bytes(item) if item is not None else str(value).encode())
+            )
+        number = element.attrib.pop("numFmtId", "0")
+        code = self.number_formats.get(int(number)) if number.isdigit() else None
+        # Built-in formats without a saved code are known by their number, kept apart
+        # from codes: built-in 0 is General, while the code "0" rounds to a whole number.
+        parts.append(
+            b"fmt-code:" + code.encode() if code is not None else b"fmt-id:" + number.encode()
+        )
+        style = self._item(self.style_xfs, element.attrib.pop("xfId", None))
+        if parent and style is not None:
+            parts.append(b"parent:" + self._written_out(style, parent=False))
+        return b"\0".join([element_bytes(element), *parts])
+
+    def dxf_token(self, index: int) -> str:
+        """The differential format at `index`, named by its content."""
+        if 0 <= index < len(self.dxfs):
+            return hashlib.sha256(element_bytes(self.dxfs[index])).hexdigest()
+        return f"missing{index}"
+
+    def name_dxfs(self, element: ET.Element) -> bool:
+        """Replace differential format references in `element` by tokens, in place.
+
+        Returns whether any reference was replaced.
+        """
+        replaced = False
+        for node in element.iter():
+            for name, value in list(node.attrib.items()):
+                if name.rsplit("}", 1)[-1].lower().endswith("dxfid") and value.isdigit():
+                    node.set(name, self.dxf_token(int(value)))
+                    replaced = True
+        return replaced
+
+    def content_identity(self, dxf_ids: Iterable[int]) -> bytes:
+        """Like `identity`, without positions; cell formats are named in the sheet by token."""
+        parts: list[bytes] = []
+        if self.fonts:
+            parts.append(b"font0:" + element_bytes(self.fonts[0]))
+        # The default cell format also applies to blank cells that are not saved.
+        parts.append(b"default:" + self.token(0).encode())
+        tokens = {self.dxf_token(index) for index in set(dxf_ids) | self.table_style_dxfs}
+        parts.extend(b"dxf:" + token.encode() for token in sorted(tokens))
+        for item in self.shared:
+            named = copy.deepcopy(item)
+            self.name_dxfs(named)
+            parts.append(element_bytes(named))
         return b"\0".join(parts)
 
 
